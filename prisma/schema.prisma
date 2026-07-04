@@ -41,6 +41,12 @@ model Company {
   // Staleness flag for price book (Module 1), in days.
   stalenessDays Int @default(30)
 
+  // Persisted what-if simulation setup (Module 5) — the master-cost items the
+  // user last chose to include in the simulator, so it reopens with their preset.
+  // Shape: string[] of masterCostIds. Values are never saved (always start from
+  // each item's live base). Null => no saved preset.
+  simSettings Json?
+
   users        User[]
   masterCosts  MasterCost[]
   templates    Template[]

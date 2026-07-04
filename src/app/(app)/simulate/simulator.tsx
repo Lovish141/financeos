@@ -1,8 +1,17 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
-import { FlaskConical, ArrowRight, AlertTriangle, TrendingDown } from "lucide-react";
-import { runSimulation, type SimResult } from "@/server/actions/simulate-actions";
+import { useActionState, useMemo, useState, useTransition } from "react";
+import {
+  FlaskConical,
+  ArrowRight,
+  AlertTriangle,
+  TrendingDown,
+  Search,
+  RotateCcw,
+  Check,
+  Save,
+} from "lucide-react";
+import { runSimulation, saveSimSettings, type SimResult } from "@/server/actions/simulate-actions";
 import { formatMoney, formatPercent } from "@/lib/utils";
 import { HEALTH_COLOR } from "@/lib/costing";
 
@@ -12,91 +21,250 @@ const RISK = "oklch(0.55 0.14 40)";
 const GREEN = "oklch(0.48 0.08 168)";
 const MUTED = "oklch(0.62 0.02 260)";
 
-export function Simulator({ masterCosts, currency }: { masterCosts: MasterCost[]; currency: string }) {
-  const [result, action, pending] = useActionState<SimResult | undefined, FormData>(runSimulation, undefined);
-  const [selectedId, setSelectedId] = useState(masterCosts[0]?.id ?? "");
-  const selected = useMemo(() => masterCosts.find((m) => m.id === selectedId), [masterCosts, selectedId]);
-  const current = selected?.currentCost ?? 0;
-  const [newPrice, setNewPrice] = useState<number>(current);
-
-  const maxPrice = Math.max(Math.ceil(current * 2), current + 100, 10);
+// Per-input slider bounds derived from the live base price. Isolated so a future
+// simulation parameter (a non-price input) only needs to supply its own rule.
+function bounds(current: number) {
+  const max = Math.max(Math.ceil(current * 2), current + 100, 10);
   const step = current > 200 ? 5 : current > 20 ? 1 : 0.5;
-  const deltaPct = current > 0 ? ((newPrice - current) / current) * 100 : 0;
-  const up = newPrice > current;
-  const flat = Math.abs(newPrice - current) < 1e-6;
-  const deltaColor = flat ? MUTED : up ? RISK : GREEN;
-  const fillPct = Math.min(100, (newPrice / maxPrice) * 100);
+  return { max, step };
+}
 
-  function pick(id: string) {
-    setSelectedId(id);
-    const mc = masterCosts.find((m) => m.id === id);
-    if (mc) setNewPrice(mc.currentCost);
+export function Simulator({
+  masterCosts,
+  currency,
+  savedIds,
+  canSave,
+}: {
+  masterCosts: MasterCost[];
+  currency: string;
+  savedIds: string[];
+  canSave: boolean;
+}) {
+  const [result, action, pending] = useActionState<SimResult | undefined, FormData>(runSimulation, undefined);
+
+  const byId = useMemo(() => new Map(masterCosts.map((m) => [m.id, m])), [masterCosts]);
+
+  // Selection order is preserved. Seed from the persisted preset, else the first item.
+  const initialIds = savedIds.length ? savedIds : masterCosts[0] ? [masterCosts[0].id] : [];
+  const [selectedIds, setSelectedIds] = useState<string[]>(initialIds);
+  // Hypothetical value per selected id — never persisted; always starts at base.
+  const [values, setValues] = useState<Record<string, number>>(() =>
+    Object.fromEntries(initialIds.map((id) => [id, byId.get(id)?.currentCost ?? 0])),
+  );
+  const [query, setQuery] = useState("");
+
+  const [savePending, startSave] = useTransition();
+  const [saved, setSaved] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return masterCosts;
+    return masterCosts.filter((m) => m.name.toLowerCase().includes(q) || m.unit.toLowerCase().includes(q));
+  }, [masterCosts, query]);
+
+  function toggle(id: string) {
+    setSaveMsg(null);
+    setSaved(false);
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      setValues((v) => (id in v ? v : { ...v, [id]: byId.get(id)?.currentCost ?? 0 }));
+      return [...prev, id];
+    });
+  }
+
+  function setValue(id: string, next: number) {
+    setValues((v) => ({ ...v, [id]: next }));
+  }
+  function reset(id: string) {
+    setValue(id, byId.get(id)?.currentCost ?? 0);
+  }
+
+  const inputsJson = JSON.stringify(selectedIds.map((id) => ({ masterCostId: id, newPrice: values[id] ?? 0 })));
+  const modifiedCount = selectedIds.filter(
+    (id) => Math.abs((values[id] ?? 0) - (byId.get(id)?.currentCost ?? 0)) > 1e-6,
+  ).length;
+
+  function onSave() {
+    setSaveMsg(null);
+    startSave(async () => {
+      const r = await saveSimSettings(selectedIds);
+      if (r.ok) {
+        setSaved(true);
+      } else {
+        setSaved(false);
+        setSaveMsg(r.error ?? "Could not save");
+      }
+    });
   }
 
   return (
     <div className="grid gap-5 lg:grid-cols-[340px_minmax(0,1fr)]">
       {/* Dark control card */}
       <form action={action} className="h-fit rounded-2xl p-[22px] text-white shadow-card" style={{ background: "oklch(0.23 0.02 262)" }}>
-        <input type="hidden" name="masterCostId" value={selectedId} />
-        <input type="hidden" name="newPrice" value={newPrice} />
+        <input type="hidden" name="inputs" value={inputsJson} />
 
-        <div className="mb-4 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "oklch(0.72 0.02 260)" }}>
-          <FlaskConical className="h-[15px] w-[15px]" strokeWidth={2} /> What-if control
-        </div>
-
-        <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "oklch(0.68 0.02 260)" }}>
-          Cost item
-        </label>
-        <select
-          value={selectedId}
-          onChange={(e) => pick(e.target.value)}
-          className="mb-5 w-full cursor-pointer appearance-none rounded-xl px-3.5 py-2.5 text-[13.5px] font-semibold text-white outline-none"
-          style={{ background: "oklch(0.3 0.02 262)", border: "1px solid oklch(0.4 0.02 262)" }}
-        >
-          {masterCosts.map((m) => (
-            <option key={m.id} value={m.id} style={{ color: "black" }}>
-              {m.name} · {formatMoney(m.currentCost, currency)}/{m.unit}
-            </option>
-          ))}
-        </select>
-
-        <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "oklch(0.68 0.02 260)" }}>
-          Hypothetical price
-        </div>
-        <div className="flex items-end justify-between">
-          <div className="font-mono text-[30px] font-bold leading-none tracking-[-0.02em]">{formatMoney(newPrice, currency)}</div>
-          <span className="rounded-full px-2 py-0.5 font-mono text-[12px] font-semibold" style={{ color: deltaColor, background: "oklch(1 0 0 / 0.08)" }}>
-            {flat ? "±0%" : `${up ? "+" : "−"}${Math.abs(deltaPct).toFixed(1)}%`}
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.12em]" style={{ color: "oklch(0.72 0.02 260)" }}>
+            <FlaskConical className="h-[15px] w-[15px]" strokeWidth={2} /> What-if control
+          </div>
+          <span className="rounded-full px-2 py-0.5 font-mono text-[10px]" style={{ color: "oklch(0.72 0.02 260)", background: "oklch(1 0 0 / 0.08)" }}>
+            {selectedIds.length} selected
           </span>
         </div>
-        <div className="mt-1 font-mono text-[11.5px]" style={{ color: "oklch(0.6 0.02 260)" }}>
-          from {formatMoney(current, currency)}{selected ? ` / ${selected.unit}` : ""}
+
+        {/* Search */}
+        <div className="mb-2 flex items-center gap-2 rounded-xl px-3 py-2" style={{ background: "oklch(0.3 0.02 262)", border: "1px solid oklch(0.4 0.02 262)" }}>
+          <Search className="h-[14px] w-[14px]" style={{ color: "oklch(0.6 0.02 260)" }} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search cost items…"
+            className="w-full border-none bg-transparent text-[13px] text-white outline-none placeholder:text-white/40"
+          />
         </div>
 
-        <input
-          type="range"
-          min={0}
-          max={maxPrice}
-          step={step}
-          value={newPrice}
-          onChange={(e) => setNewPrice(Number(e.target.value))}
-          className="sim-slider mt-4 w-full"
-          style={{ background: `linear-gradient(90deg, ${up ? RISK : GREEN} ${fillPct}%, oklch(0.36 0.02 262) ${fillPct}%)` }}
-        />
-
-        <div className="mt-1.5 flex justify-between font-mono text-[10px]" style={{ color: "oklch(0.55 0.02 260)" }}>
-          <span>{formatMoney(0, currency)}</span>
-          <span>{formatMoney(maxPrice, currency)}</span>
+        {/* Selectable list */}
+        <div className="mb-4 max-h-[190px] overflow-y-auto rounded-xl" style={{ border: "1px solid oklch(0.34 0.02 262)" }}>
+          {filtered.length === 0 ? (
+            <div className="px-3 py-4 text-center font-mono text-[11px]" style={{ color: "oklch(0.58 0.02 260)" }}>No matches</div>
+          ) : (
+            filtered.map((m) => {
+              const on = selectedIds.includes(m.id);
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => toggle(m.id)}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition hover:bg-white/[0.04]"
+                  style={{ background: on ? "oklch(0.3 0.02 262)" : "transparent" }}
+                >
+                  <span
+                    className="flex h-[16px] w-[16px] shrink-0 items-center justify-center rounded-[5px]"
+                    style={{ background: on ? "white" : "transparent", border: on ? "none" : "1px solid oklch(0.45 0.02 262)" }}
+                  >
+                    {on && <Check className="h-[11px] w-[11px] text-ink-900" strokeWidth={3} />}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-white">{m.name}</span>
+                  <span className="shrink-0 font-mono text-[10.5px]" style={{ color: "oklch(0.62 0.02 260)" }}>
+                    {formatMoney(m.currentCost, currency)}/{m.unit}
+                  </span>
+                </button>
+              );
+            })
+          )}
         </div>
+
+        {/* Adjustments */}
+        <div className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.1em]" style={{ color: "oklch(0.68 0.02 260)" }}>
+          <span>Adjustments</span>
+          {modifiedCount > 0 && <span style={{ color: "oklch(0.8 0.08 65)" }}>{modifiedCount} modified</span>}
+        </div>
+
+        {selectedIds.length === 0 ? (
+          <div className="rounded-xl px-3 py-4 text-center font-mono text-[11px]" style={{ background: "oklch(0.27 0.02 262)", color: "oklch(0.6 0.02 260)" }}>
+            Select cost items above to adjust their prices.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {selectedIds.map((id) => {
+              const mc = byId.get(id);
+              if (!mc) return null;
+              const current = mc.currentCost;
+              const val = values[id] ?? current;
+              const { max, step } = bounds(current);
+              const deltaPct = current > 0 ? ((val - current) / current) * 100 : 0;
+              const up = val > current;
+              const modified = Math.abs(val - current) > 1e-6;
+              const deltaColor = !modified ? MUTED : up ? RISK : GREEN;
+              const fillPct = Math.min(100, (val / max) * 100);
+              return (
+                <div
+                  key={id}
+                  className="rounded-xl p-3"
+                  style={{ background: "oklch(0.27 0.02 262)", border: modified ? `1px solid ${up ? RISK : GREEN}` : "1px solid oklch(0.32 0.02 262)" }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      {modified && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: up ? RISK : GREEN }} />}
+                      <span className="truncate text-[12.5px] font-semibold text-white">{mc.name}</span>
+                    </div>
+                    <span className="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[10.5px] font-semibold" style={{ color: deltaColor, background: "oklch(1 0 0 / 0.08)" }}>
+                      {!modified ? "±0%" : `${up ? "+" : "−"}${Math.abs(deltaPct).toFixed(1)}%`}
+                    </span>
+                  </div>
+
+                  <div className="mt-1 font-mono text-[10px]" style={{ color: "oklch(0.58 0.02 260)" }}>
+                    base {formatMoney(current, currency)}/{mc.unit}
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-2.5">
+                    <input
+                      type="range"
+                      min={0}
+                      max={max}
+                      step={step}
+                      value={val}
+                      onChange={(e) => setValue(id, Number(e.target.value))}
+                      className="sim-slider min-w-0 flex-1"
+                      style={{ background: `linear-gradient(90deg, ${up ? RISK : GREEN} ${fillPct}%, oklch(0.36 0.02 262) ${fillPct}%)` }}
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={max}
+                      step={step}
+                      value={val}
+                      onChange={(e) => {
+                        if (e.target.value === "") return setValue(id, 0);
+                        const n = Number(e.target.value);
+                        if (Number.isNaN(n)) return;
+                        setValue(id, Math.min(max, Math.max(0, n)));
+                      }}
+                      className="w-[74px] shrink-0 rounded-lg px-2 py-1 text-right font-mono text-[12px] font-semibold text-white outline-none"
+                      style={{ background: "oklch(0.32 0.02 262)", border: "1px solid oklch(0.42 0.02 262)" }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => reset(id)}
+                      disabled={!modified}
+                      title="Reset to base"
+                      className="shrink-0 text-white/70 transition hover:text-white disabled:opacity-30"
+                    >
+                      <RotateCcw className="h-[13px] w-[13px]" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <button
           type="submit"
-          disabled={pending || !selectedId}
-          className="mt-5 w-full rounded-xl bg-white py-[11px] text-[13.5px] font-bold text-ink-900 transition active:scale-[0.98] disabled:opacity-50"
+          disabled={pending || selectedIds.length === 0}
+          className="mt-4 w-full rounded-xl bg-white py-[11px] text-[13.5px] font-bold text-ink-900 transition active:scale-[0.98] disabled:opacity-50"
         >
-          {pending ? "Simulating…" : "Run simulation"}
+          {pending ? "Simulating…" : `Run simulation${selectedIds.length > 1 ? ` · ${selectedIds.length} inputs` : ""}`}
         </button>
-        <p className="mt-3 text-center font-mono text-[10px]" style={{ color: "oklch(0.55 0.02 260)" }}>
+
+        {canSave && (
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={savePending || selectedIds.length === 0}
+            className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl py-[9px] text-[12.5px] font-semibold transition hover:bg-white/[0.06] active:scale-[0.98] disabled:opacity-40"
+            style={{ border: "1px solid oklch(0.42 0.02 262)", color: saved ? GREEN : "white" }}
+          >
+            {saved ? <Check className="h-[13px] w-[13px]" /> : <Save className="h-[13px] w-[13px]" />}
+            {savePending ? "Saving…" : saved ? "Setup saved" : "Save this setup"}
+          </button>
+        )}
+        {saveMsg && !saved && (
+          <p className="mt-1.5 text-center font-mono text-[10px]" style={{ color: RISK }}>{saveMsg}</p>
+        )}
+
+        <p className="mt-2.5 text-center font-mono text-[10px]" style={{ color: "oklch(0.55 0.02 260)" }}>
           Read-only · nothing is saved
         </p>
       </form>
@@ -113,11 +281,7 @@ export function Simulator({ masterCosts, currency }: { masterCosts: MasterCost[]
               <KpiCard
                 label="Affected products"
                 value={String(result.affectedCount)}
-                sub={
-                  <>
-                    {result.masterCostName} {formatMoney(result.currentPrice!, currency)} <ArrowRight className="inline h-3 w-3" /> {formatMoney(result.newPrice!, currency)}
-                  </>
-                }
+                sub={`across ${result.inputs!.length} input${result.inputs!.length === 1 ? "" : "s"}`}
               />
               <KpiCard
                 label="Would go negative"
@@ -126,15 +290,40 @@ export function Simulator({ masterCosts, currency }: { masterCosts: MasterCost[]
                 icon={<AlertTriangle className="h-[15px] w-[15px]" />}
               />
               <KpiCard
-                label="Input price move"
-                value={result.currentPrice ? formatPercent(((result.newPrice! - result.currentPrice) / result.currentPrice) * 100) : "—"}
-                valueColor={result.newPrice! > result.currentPrice! ? RISK : result.newPrice! < result.currentPrice! ? GREEN : undefined}
+                label="Inputs simulated"
+                value={String(result.inputs!.length)}
+                sub={result.inputs!.map((i) => i.name).join(", ")}
                 icon={<TrendingDown className="h-[15px] w-[15px]" />}
               />
             </div>
 
+            {/* Simulated inputs — before → after per changed price. */}
+            <div className="card p-[18px]">
+              <div className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-500">Simulated inputs</div>
+              <div className="flex flex-wrap gap-2">
+                {result.inputs!.map((i) => {
+                  const up = i.newPrice > i.currentPrice;
+                  const flat = Math.abs(i.newPrice - i.currentPrice) < 1e-6;
+                  const c = flat ? MUTED : up ? RISK : GREEN;
+                  const pct = i.currentPrice > 0 ? ((i.newPrice - i.currentPrice) / i.currentPrice) * 100 : 0;
+                  return (
+                    <span
+                      key={i.masterCostId}
+                      className="flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-white px-2.5 py-1 font-mono text-[11.5px]"
+                    >
+                      <span className="font-semibold text-ink-900">{i.name}</span>
+                      <span className="text-ink-400">{formatMoney(i.currentPrice, currency)}</span>
+                      <ArrowRight className="h-3 w-3 text-ink-300" />
+                      <span className="font-semibold" style={{ color: c }}>{formatMoney(i.newPrice, currency)}</span>
+                      {!flat && <span style={{ color: c }}>({up ? "+" : "−"}{Math.abs(pct).toFixed(1)}%)</span>}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+
             {result.affectedCount === 0 ? (
-              <div className="card p-5 text-[13.5px] text-ink-500">No products use this cost item, so nothing is affected.</div>
+              <div className="card p-5 text-[13.5px] text-ink-500">No products use these cost items, so nothing is affected.</div>
             ) : (
               <div className="card overflow-hidden p-0">
                 <div className="border-b border-[var(--border)] px-[22px] py-[15px]">
@@ -149,7 +338,7 @@ export function Simulator({ masterCosts, currency }: { masterCosts: MasterCost[]
                   <span className="text-right">Cost</span>
                   <span className="text-right">Margin</span>
                   <span className="text-right">Margin % after</span>
-                  <span className="text-right">Δ</span>
+                  <span className="text-right">Margin Δ</span>
                 </div>
                 {result.impacts!.map((im) => {
                   const color = HEALTH_COLOR[im.afterHealth];
@@ -204,7 +393,7 @@ export function Simulator({ masterCosts, currency }: { masterCosts: MasterCost[]
             <div>
               <div className="text-[15px] font-bold text-ink-900">Model a price change</div>
               <p className="mx-auto mt-1 max-w-xs text-[13px] text-ink-400">
-                Drag the slider to a hypothetical input price and run the simulation to see every affected SKU’s new margin.
+                Select one or more cost items, adjust their hypothetical prices, and run the simulation to see every affected SKU’s new margin.
               </p>
             </div>
           </div>

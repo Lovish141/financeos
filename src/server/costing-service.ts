@@ -159,3 +159,35 @@ export async function affectedProducts(db: TenantDb, masterCostId: string) {
 
   return [...viaTemplate, ...viaComps];
 }
+
+/**
+ * Like {@link affectedProducts} but for a set of master costs at once — every
+ * product whose recipe references *any* of the given ids. Used by the multi-input
+ * what-if simulator (Module 5): one fan-out query instead of N.
+ */
+export async function affectedProductsMany(db: TenantDb, masterCostIds: string[]) {
+  if (masterCostIds.length === 0) return [];
+  const idSet = new Set(masterCostIds);
+  const include = {
+    templateVersion: true,
+    template: { select: { name: true, category: true } },
+  } as const;
+
+  const viaTemplate = await db.product.findMany({
+    where: { template: { components: { some: { masterCostId: { in: masterCostIds } } } } },
+    include,
+  });
+
+  const seen = new Set(viaTemplate.map((p) => p.id));
+  const compsProducts = await db.product.findMany({
+    where: { comps: { not: Prisma.DbNull } },
+    include,
+  });
+  const viaComps = compsProducts.filter((p) => {
+    if (seen.has(p.id)) return false;
+    const lines = (p.comps as unknown as SnapshotLine[]) ?? [];
+    return lines.some((l) => idSet.has(l.masterCostId));
+  });
+
+  return [...viaTemplate, ...viaComps];
+}
