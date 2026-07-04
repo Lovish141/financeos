@@ -1,0 +1,179 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: oklch(0.975 0.004 240);
+  --card: #ffffff;
+  --border: oklch(0.92 0.004 250);
+  --muted: oklch(0.5 0.01 260);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: oklch(0.25 0.01 260);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Refined scrollbars to match the design */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.88 0.006 250) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: oklch(0.88 0.006 250);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.82 0.008 250);
+  background-clip: padding-box;
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-[var(--border)] bg-white shadow-soft;
+  }
+
+  .input,
+  select.input,
+  textarea.input {
+    @apply w-full rounded-xl border border-ink-300 bg-white px-[13px] py-[11px] text-sm text-ink-900 outline-none transition-all duration-150 placeholder:text-ink-400;
+  }
+  .input:focus {
+    border-color: oklch(0.55 0.07 172);
+    box-shadow: 0 0 0 3px oklch(0.55 0.09 172 / 0.14);
+  }
+  select.input {
+    @apply cursor-pointer appearance-none pr-9;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='oklch(0.5 0.01 260)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 16px;
+  }
+
+  /* Mono uppercase form label (design: IBM Plex Mono, 10.5px, 0.08em) */
+  .label {
+    @apply mb-[7px] block font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-ink-500;
+  }
+
+  /* Mono screen eyebrow above page titles */
+  .eyebrow {
+    @apply block font-mono text-[11px] font-medium uppercase tracking-eyebrow text-ink-500;
+  }
+
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-[18px] py-[11px] text-[13.5px] font-bold transition-all duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn text-white shadow-soft;
+    background: oklch(0.28 0.02 260);
+  }
+  .btn-primary:hover {
+    background: oklch(0.22 0.02 260);
+  }
+  .btn-brand {
+    @apply btn bg-brand-gradient text-white shadow-glow hover:brightness-[1.05];
+  }
+  .btn-secondary {
+    @apply btn border border-ink-200 bg-white font-semibold text-ink-700 hover:bg-ink-50;
+  }
+  .btn-ghost {
+    @apply btn border border-ink-200 bg-white font-semibold text-ink-700 hover:bg-ink-50;
+  }
+  .btn-danger {
+    @apply btn text-white;
+    background: oklch(0.55 0.16 28);
+  }
+  .btn-danger:hover {
+    background: oklch(0.48 0.16 28);
+  }
+
+  /* Small pill used for tags/counts */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium;
+  }
+
+  /* Square icon action button used in table rows / cards (design ui.iconBtn) */
+  .icon-btn {
+    @apply flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-500 transition-colors hover:bg-ink-100;
+  }
+  .icon-btn-danger:hover {
+    color: oklch(0.55 0.14 30);
+    background: oklch(0.96 0.02 30);
+  }
+
+  /* Filter tabs (design tabStyle): dark active, white inactive */
+  .seg {
+    @apply cursor-pointer rounded-[9px] border px-[15px] py-[7px] text-[13px] font-semibold transition-colors;
+  }
+  .seg-on {
+    @apply border-transparent bg-ink-800 text-white;
+  }
+  .seg-off {
+    @apply border-ink-200 bg-white text-ink-600 hover:bg-ink-50;
+  }
+
+  /* Range slider used on the What-If control (design price slider) */
+  .sim-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 999px;
+    outline: none;
+    cursor: pointer;
+  }
+  .sim-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px oklch(0 0 0 / 0.35);
+    cursor: pointer;
+  }
+  .sim-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border: none;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px oklch(0 0 0 / 0.35);
+    cursor: pointer;
+  }
+
+  /* Rounded search box with leading icon (design search field) */
+  .search-box {
+    @apply flex items-center gap-2 rounded-[10px] border border-ink-200 bg-white px-3 py-2;
+  }
+  .search-box input {
+    @apply w-full border-none bg-transparent text-[13.5px] text-ink-900 outline-none placeholder:text-ink-400;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl;
+  }
+  /* skeleton shimmer */
+  .shimmer {
+    @apply relative overflow-hidden;
+  }
+  .shimmer::after {
+    content: "";
+    @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/60 to-transparent;
+    animation: shimmer 1.6s infinite;
+  }
+}
