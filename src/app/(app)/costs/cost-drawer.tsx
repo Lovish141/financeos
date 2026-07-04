@@ -389,7 +389,7 @@ function CostPreviewDrawer({
               detail={data.archived ? undefined : () => getMasterCostImpact(data.id).then((i) => <CostImpact impact={i} />)}
               wide={!data.archived}
               confirmLabel={data.archived ? "Restore" : "Archive"}
-              tone="neutral"
+              tone={data.archived ? "neutral" : "danger"}
               icon={data.archived ? "restore" : "archive"}
               toastMessage={data.archived ? "Cost item restored" : "Cost item archived"}
               onConfirmed={() => {

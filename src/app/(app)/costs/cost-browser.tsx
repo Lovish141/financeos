@@ -224,7 +224,7 @@ export function CostBrowser({
                       detail={archived ? undefined : () => getMasterCostImpact(item.id).then((impact) => <CostImpact impact={impact} />)}
                       wide={!archived}
                       confirmLabel={archived ? "Restore" : "Archive"}
-                      tone="neutral"
+                      tone={archived ? "neutral" : "danger"}
                       icon={archived ? "restore" : "archive"}
                       toastMessage={archived ? "Cost item restored" : "Cost item archived"}
                       onConfirmed={refetch}
