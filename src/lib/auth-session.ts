@@ -39,5 +39,15 @@ export async function destroyUserSession(): Promise<void> {
   if (token) {
     await prisma.session.deleteMany({ where: { sessionToken: token } });
   }
-  jar.delete(name);
+  // Clear by overwriting with the same attributes used when setting it.
+  // `__Secure-` prefixed cookies are rejected by browsers unless the
+  // clearing Set-Cookie also carries `Secure` (and a matching path), so a
+  // plain `jar.delete(name)` leaves the cookie in place.
+  jar.set(name, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: isProd,
+    maxAge: 0,
+  });
 }
