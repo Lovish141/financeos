@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import type { TenantDb } from "@/lib/tenant";
 import {
   computeProductCost,
@@ -58,9 +59,33 @@ export async function getLiveCosts(
 }
 
 interface ProductForCost {
-  brassWeight: number;
   sellingPrice: number;
-  templateVersion: { snapshot: unknown };
+  comps?: Prisma.JsonValue | null;
+  template?: { name: string | null; category: string | null } | null;
+  templateVersion?: { snapshot: Prisma.JsonValue } | null;
+}
+
+/**
+ * The snapshot a product is actually costed against. A product with `comps`
+ * carries its own per-line list (built on / diverged from its template); a legacy
+ * product falls back to its pinned template-version snapshot. Either way the
+ * result is a `TemplateSnapshot`, so `computeProductCost` stays unchanged.
+ */
+export function effectiveSnapshot(product: ProductForCost): TemplateSnapshot {
+  if (product.comps != null) {
+    return {
+      version: 0,
+      templateName: product.template?.name ?? "Custom",
+      category: product.template?.category ?? null,
+      lines: product.comps as unknown as SnapshotLine[],
+    };
+  }
+  return (product.templateVersion?.snapshot as unknown as TemplateSnapshot) ?? {
+    version: 0,
+    templateName: product.template?.name ?? "Custom",
+    category: product.template?.category ?? null,
+    lines: [],
+  };
 }
 
 /** Compute a single product's cost using the live price book (+ optional overrides). */
@@ -69,11 +94,10 @@ export async function computeForProduct(
   product: ProductForCost,
   overrides?: Record<string, number>,
 ): Promise<CostResult> {
-  const snapshot = product.templateVersion.snapshot as unknown as TemplateSnapshot;
+  const snapshot = effectiveSnapshot(product);
   const ids = snapshot.lines.map((l) => l.masterCostId);
   const liveCosts = await getLiveCosts(db, ids);
   return computeProductCost({
-    brassWeight: product.brassWeight,
     sellingPrice: product.sellingPrice,
     snapshot,
     liveCosts,
@@ -85,7 +109,7 @@ export async function computeForProduct(
 export async function recomputeProduct(db: TenantDb, productId: string): Promise<void> {
   const product = await db.product.findFirst({
     where: { id: productId },
-    include: { templateVersion: true },
+    include: { templateVersion: true, template: { select: { name: true, category: true } } },
   });
   if (!product) return;
 
@@ -108,10 +132,31 @@ export async function recomputeProduct(db: TenantDb, productId: string): Promise
  * TemplateComponent.masterCostId index keeps this fast at scale.
  */
 export async function affectedProducts(db: TenantDb, masterCostId: string) {
-  return db.product.findMany({
+  const include = {
+    templateVersion: true,
+    template: { select: { name: true, category: true } },
+  } as const;
+
+  // Legacy products: the master cost is referenced by their template's recipe.
+  const viaTemplate = await db.product.findMany({
     where: { template: { components: { some: { masterCostId } } } },
-    include: { templateVersion: true },
+    include,
   });
+
+  // Comps-based products: the master cost may appear directly in their per-product
+  // line list (JSON — not queryable with `some`, so filter in memory).
+  const seen = new Set(viaTemplate.map((p) => p.id));
+  const compsProducts = await db.product.findMany({
+    where: { comps: { not: Prisma.DbNull } },
+    include,
+  });
+  const viaComps = compsProducts.filter((p) => {
+    if (seen.has(p.id)) return false;
+    const lines = (p.comps as unknown as SnapshotLine[]) ?? [];
+    return lines.some((l) => l.masterCostId === masterCostId);
+  });
+
+  return [...viaTemplate, ...viaComps];
 }
 
 /**

@@ -69,7 +69,7 @@ export default async function DashboardPage() {
   // Category rollups (coloured by the same health model used across the app).
   const byCat = new Map<string, { sum: number; count: number }>();
   for (const p of products) {
-    const key = p.template.category || p.template.name;
+    const key = p.template?.category || p.template?.name || "Custom";
     const cur = byCat.get(key) ?? { sum: 0, count: 0 };
     cur.sum += p.grossMarginPct;
     cur.count += 1;
@@ -226,7 +226,7 @@ export default async function DashboardPage() {
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[13.5px] font-bold tracking-[-0.01em] text-ink-900">{r.name}</div>
                       <div className="mt-0.5 font-mono text-[10.5px]" style={{ color: MUTED }}>
-                        {r.template.category || r.template.name} · {formatMoney(r.grossMarginAmount, currency)}/unit
+                        {r.template?.category || r.template?.name || "Custom"} · {formatMoney(r.grossMarginAmount, currency)}/unit
                       </div>
                     </div>
                     <div className="font-mono text-[15px] font-semibold" style={{ color: "oklch(0.55 0.13 40)" }}>

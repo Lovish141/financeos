@@ -4,38 +4,119 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireSession, assertCanEdit } from "@/lib/session";
-import { computeProductCost, type TemplateSnapshot } from "@/lib/costing";
-import { getLiveCosts } from "@/server/costing-service";
-import { toSkuToken } from "@/lib/utils";
+import { prisma } from "@/lib/prisma";
+import {
+  computeProductCost,
+  marginHealth,
+  type ProductComp,
+  type MarginHealth,
+} from "@/lib/costing";
+import { computeForProduct, effectiveSnapshot, getLiveCosts } from "@/server/costing-service";
+import { toSkuToken, formatCurrency } from "@/lib/utils";
 import type { ActionResult } from "./cost-actions";
+import type { Prisma, ProductStatus } from "@prisma/client";
 
-const productSchema = z.object({
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+type Db = Awaited<ReturnType<typeof requireSession>>["db"];
+
+const compInputSchema = z.array(
+  z.object({
+    masterCostId: z.string().min(1),
+    quantity: z.coerce.number().positive("Every component needs a quantity greater than 0"),
+  }),
+);
+
+const productPayloadSchema = z.object({
   name: z.string().min(1, "Name is required"),
   sku: z.string().optional(),
-  templateId: z.string().min(1, "Choose a template"),
-  brassWeight: z.coerce.number().nonnegative("Weight must be ≥ 0"),
-  sellingPrice: z.coerce.number().nonnegative("Price must be ≥ 0"),
+  templateId: z.string().optional(), // "" / undefined => Empty Template
+  sellingPrice: z.coerce.number().positive("Selling price must be greater than 0"),
+  status: z.enum(["DRAFT", "ACTIVE", "DISCONTINUED"]).optional(),
 });
 
-async function latestVersion(
-  db: Awaited<ReturnType<typeof requireSession>>["db"],
-  templateId: string,
-) {
-  const template = await db.template.findFirst({
-    where: { id: templateId },
-    select: { versions: { orderBy: { version: "desc" }, take: 1 } },
-  });
-  return template?.versions[0] ?? null;
+/** Parse the JSON `comps` field the drawer submits. */
+function parseComps(formData: FormData) {
+  try {
+    return compInputSchema.safeParse(JSON.parse(String(formData.get("comps") || "[]")));
+  } catch {
+    return null;
+  }
 }
 
-async function computeFields(
-  db: Awaited<ReturnType<typeof requireSession>>["db"],
-  snapshot: TemplateSnapshot,
-  brassWeight: number,
+/**
+ * Resolve a product's submitted component list into full snapshot lines, pulling
+ * name / unit / current cost from the price book (tenant-scoped). Returns the
+ * built lines + the resolved template link, or an error string.
+ */
+async function buildComps(
+  db: Db,
+  templateId: string | undefined,
+  raw: { masterCostId: string; quantity: number }[],
+): Promise<
+  | { error: string }
+  | { comps: ProductComp[]; templateId: string | null; templateVersionId: string | null; templateName: string | null; category: string | null }
+> {
+  if (raw.length === 0) return { error: "Add at least one component to the product." };
+
+  const ids = [...new Set(raw.map((r) => r.masterCostId))];
+  const masters = await db.masterCost.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true, unit: true, currentCost: true, type: true },
+  });
+  const byId = new Map(masters.map((m) => [m.id, m]));
+  if (byId.size !== ids.length) return { error: "One or more components no longer exist." };
+
+  const comps: ProductComp[] = raw.map((r) => {
+    const mc = byId.get(r.masterCostId)!;
+    return {
+      masterCostId: mc.id,
+      name: mc.name,
+      lineType: mc.type === "RAW_MATERIAL" ? "WEIGHT" : "FIXED",
+      unit: mc.unit,
+      quantity: r.quantity,
+      unitCostAtSnapshot: mc.currentCost,
+    };
+  });
+
+  // Resolve template provenance (optional base). Empty Template => no links.
+  let templateLink: { id: string; name: string; category: string | null } | null = null;
+  let templateVersionId: string | null = null;
+  if (templateId) {
+    const template = await db.template.findFirst({
+      where: { id: templateId },
+      select: { id: true, name: true, category: true, versions: { orderBy: { version: "desc" }, take: 1, select: { id: true } } },
+    });
+    if (!template) return { error: "That template no longer exists." };
+    templateLink = { id: template.id, name: template.name, category: template.category };
+    templateVersionId = template.versions[0]?.id ?? null;
+  }
+
+  return {
+    comps,
+    templateId: templateLink?.id ?? null,
+    templateVersionId,
+    templateName: templateLink?.name ?? null,
+    category: templateLink?.category ?? null,
+  };
+}
+
+/** Cached cost/margin fields for a set of comps + price. */
+async function cachedFields(
+  db: Db,
+  comps: ProductComp[],
+  templateName: string | null,
+  category: string | null,
   sellingPrice: number,
 ) {
-  const liveCosts = await getLiveCosts(db, snapshot.lines.map((l) => l.masterCostId));
-  const result = computeProductCost({ brassWeight, sellingPrice, snapshot, liveCosts });
+  const liveCosts = await getLiveCosts(db, comps.map((c) => c.masterCostId));
+  const result = computeProductCost({
+    sellingPrice,
+    snapshot: { version: 0, templateName: templateName ?? "Custom", category, lines: comps },
+    liveCosts,
+  });
   return {
     totalCost: result.totalCost,
     grossMarginAmount: result.grossMarginAmount,
@@ -44,20 +125,20 @@ async function computeFields(
   };
 }
 
-async function uniqueSku(
-  db: Awaited<ReturnType<typeof requireSession>>["db"],
-  base: string,
-): Promise<string> {
+async function uniqueSku(db: Db, base: string): Promise<string> {
   const root = base || "SKU";
   let candidate = root;
   let n = 1;
-  // Scoped count — collisions are per-company.
   while ((await db.product.count({ where: { sku: candidate } })) > 0) {
     n += 1;
     candidate = `${root}-${n}`;
   }
   return candidate;
 }
+
+// ---------------------------------------------------------------------------
+// Create / update (drawer-friendly: return a result instead of redirecting)
+// ---------------------------------------------------------------------------
 
 export async function createProduct(
   _prev: ActionResult,
@@ -66,44 +147,36 @@ export async function createProduct(
   const { db, role, companyId } = await requireSession();
   assertCanEdit(role);
 
-  const parsed = productSchema.safeParse(Object.fromEntries(formData));
+  const parsed = productPayloadSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.errors[0]?.message };
+  const compsParsed = parseComps(formData);
+  if (!compsParsed || !compsParsed.success) return { error: "Could not read the component list." };
   const data = parsed.data;
 
-  const version = await latestVersion(db, data.templateId);
-  if (!version) {
-    return { error: "This template has no saved recipe yet. Open the template and save its recipe first." };
-  }
+  const built = await buildComps(db, data.templateId || undefined, compsParsed.data);
+  if ("error" in built) return { error: built.error };
 
-  const snapshot = version.snapshot as unknown as TemplateSnapshot;
-  const fields = await computeFields(db, snapshot, data.brassWeight, data.sellingPrice);
+  const fields = await cachedFields(db, built.comps, built.templateName, built.category, data.sellingPrice);
   const sku = await uniqueSku(db, data.sku?.trim() || toSkuToken(data.name));
 
-  const created = await db.product.create({
+  await db.product.create({
     data: {
       companyId,
       name: data.name,
       sku,
-      templateId: data.templateId,
-      templateVersionId: version.id,
-      brassWeight: data.brassWeight,
+      templateId: built.templateId,
+      templateVersionId: built.templateVersionId,
+      comps: built.comps as object,
       sellingPrice: data.sellingPrice,
+      status: data.status ?? "ACTIVE",
       ...fields,
     },
   });
 
   revalidatePath("/products");
   revalidatePath("/dashboard");
-  redirect(`/products/${created.id}?flash=${encodeURIComponent("Product created")}`);
+  return { ok: true };
 }
-
-const updateSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1, "Name is required"),
-  brassWeight: z.coerce.number().nonnegative(),
-  sellingPrice: z.coerce.number().nonnegative(),
-  status: z.enum(["DRAFT", "ACTIVE", "DISCONTINUED"]).optional(),
-});
 
 export async function updateProduct(
   _prev: ActionResult,
@@ -112,24 +185,29 @@ export async function updateProduct(
   const { db, role } = await requireSession();
   assertCanEdit(role);
 
-  const parsed = updateSchema.safeParse(Object.fromEntries(formData));
+  const id = String(formData.get("id") || "");
+  if (!id) return { error: "Missing product id." };
+  const parsed = productPayloadSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.errors[0]?.message };
+  const compsParsed = parseComps(formData);
+  if (!compsParsed || !compsParsed.success) return { error: "Could not read the component list." };
   const data = parsed.data;
 
-  const product = await db.product.findFirst({
-    where: { id: data.id },
-    include: { templateVersion: true },
-  });
-  if (!product) return { error: "Product not found." };
+  const existing = await db.product.findFirst({ where: { id }, select: { id: true } });
+  if (!existing) return { error: "Product not found." };
 
-  const snapshot = product.templateVersion.snapshot as unknown as TemplateSnapshot;
-  const fields = await computeFields(db, snapshot, data.brassWeight, data.sellingPrice);
+  const built = await buildComps(db, data.templateId || undefined, compsParsed.data);
+  if ("error" in built) return { error: built.error };
+
+  const fields = await cachedFields(db, built.comps, built.templateName, built.category, data.sellingPrice);
 
   await db.product.update({
-    where: { id: data.id },
+    where: { id },
     data: {
       name: data.name,
-      brassWeight: data.brassWeight,
+      templateId: built.templateId,
+      templateVersionId: built.templateVersionId,
+      comps: built.comps as object,
       sellingPrice: data.sellingPrice,
       status: data.status,
       ...fields,
@@ -137,36 +215,8 @@ export async function updateProduct(
   });
 
   revalidatePath("/products");
-  revalidatePath(`/products/${data.id}`);
   revalidatePath("/dashboard");
-  redirect(`/products/${data.id}?flash=${encodeURIComponent("Product updated")}`);
-}
-
-export async function cloneProduct(id: string) {
-  const { db, role, companyId } = await requireSession();
-  assertCanEdit(role);
-
-  const source = await db.product.findFirst({ where: { id } });
-  if (!source) throw new Error("Product not found");
-
-  const sku = await uniqueSku(db, `${source.sku}-COPY`);
-  const clone = await db.product.create({
-    data: {
-      companyId,
-      name: `${source.name} (copy)`,
-      sku,
-      templateId: source.templateId,
-      templateVersionId: source.templateVersionId,
-      brassWeight: source.brassWeight,
-      sellingPrice: source.sellingPrice,
-      totalCost: source.totalCost,
-      grossMarginAmount: source.grossMarginAmount,
-      grossMarginPct: source.grossMarginPct,
-      status: "DRAFT",
-    },
-  });
-  revalidatePath("/products");
-  redirect(`/products/${clone.id}?flash=${encodeURIComponent("Product duplicated")}`);
+  return { ok: true };
 }
 
 export async function deleteProduct(id: string) {
@@ -176,4 +226,183 @@ export async function deleteProduct(id: string) {
   revalidatePath("/products");
   revalidatePath("/dashboard");
   redirect(`/products?flash=${encodeURIComponent("Product deleted")}`);
+}
+
+// ---------------------------------------------------------------------------
+// Data loaders for the drawers
+// ---------------------------------------------------------------------------
+
+export interface ProductBreakdown {
+  ok: boolean;
+  error?: string;
+  id: string;
+  name: string;
+  sku: string;
+  status: string;
+  templateName: string;
+  category: string | null;
+  currency: string;
+  totalCost: number;
+  sellingPrice: number;
+  grossMarginAmount: number;
+  grossMarginPct: number;
+  health: MarginHealth;
+  lines: { masterCostId: string; name: string; detail: string; lineCost: number; sharePct: number }[];
+}
+
+/** Preview payload for a single product — reuses the shared costing engine. */
+export async function getProductBreakdown(id: string): Promise<ProductBreakdown | { ok: false; error: string }> {
+  const { db, companyId } = await requireSession();
+
+  const product = await db.product.findFirst({
+    where: { id },
+    include: { templateVersion: true, template: { select: { name: true, category: true } } },
+  });
+  if (!product) return { ok: false, error: "Product not found." };
+
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { baseCurrency: true, weightUnit: true, marginRedThreshold: true, marginYellowThreshold: true },
+  });
+  const currency = company?.baseCurrency ?? "INR";
+  const weightUnit = company?.weightUnit ?? "kg";
+  const thresholds = {
+    marginRedThreshold: company?.marginRedThreshold ?? 15,
+    marginYellowThreshold: company?.marginYellowThreshold ?? 30,
+  };
+
+  const result = await computeForProduct(db, product);
+  const total = result.totalCost || 1;
+
+  return {
+    ok: true,
+    id: product.id,
+    name: product.name,
+    sku: product.sku,
+    status: product.status,
+    templateName: product.template?.name ?? "Custom",
+    category: product.template?.category ?? null,
+    currency,
+    totalCost: result.totalCost,
+    sellingPrice: product.sellingPrice,
+    grossMarginAmount: result.grossMarginAmount,
+    grossMarginPct: result.grossMarginPct,
+    health: marginHealth(result.grossMarginPct, thresholds),
+    lines: result.lines.map((l) => ({
+      masterCostId: l.masterCostId,
+      name: l.name,
+      detail: `${l.quantity}${l.lineType === "WEIGHT" ? " " + weightUnit : " " + l.unit} × ${formatCurrency(l.unitCost, currency)}`,
+      lineCost: l.lineCost,
+      sharePct: Math.round((l.lineCost / total) * 100),
+    })),
+  };
+}
+
+export interface DraftComp {
+  masterCostId: string;
+  quantity: number;
+  name: string;
+  type: string;
+  unit: string;
+  currentCost: number;
+}
+
+export interface ProductDraft {
+  ok: boolean;
+  error?: string;
+  id: string;
+  name: string;
+  sellingPrice: number;
+  status: string;
+  templateId: string | null;
+  comps: DraftComp[];
+}
+
+/** Seed the edit form. Legacy (comps-null) products are upgraded to the comps model. */
+export async function getProductDraft(id: string): Promise<ProductDraft | { ok: false; error: string }> {
+  const { db } = await requireSession();
+
+  const product = await db.product.findFirst({
+    where: { id },
+    include: { templateVersion: true, template: { select: { name: true, category: true } } },
+  });
+  if (!product) return { ok: false, error: "Product not found." };
+
+  const snapshot = effectiveSnapshot(product);
+  const ids = snapshot.lines.map((l) => l.masterCostId);
+  const masters = await db.masterCost.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true, type: true, unit: true, currentCost: true },
+  });
+  const byId = new Map(masters.map((m) => [m.id, m]));
+
+  const comps: DraftComp[] = snapshot.lines.map((l) => {
+    const mc = byId.get(l.masterCostId);
+    return {
+      masterCostId: l.masterCostId,
+      quantity: l.quantity ?? 0,
+      name: mc?.name ?? l.name,
+      type: mc?.type ?? (l.lineType === "WEIGHT" ? "RAW_MATERIAL" : "COMPONENT"),
+      unit: mc?.unit ?? l.unit,
+      currentCost: mc?.currentCost ?? l.unitCostAtSnapshot,
+    };
+  });
+
+  return {
+    ok: true,
+    id: product.id,
+    name: product.name,
+    sellingPrice: product.sellingPrice,
+    status: product.status,
+    templateId: product.templateId ?? null,
+    comps,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Live search — returns the filtered product rows for the table without a full
+// page navigation (called from the client on debounced query/status changes).
+// ---------------------------------------------------------------------------
+
+export interface ProductListItem {
+  id: string;
+  name: string;
+  sku: string;
+  status: ProductStatus;
+  totalCost: number;
+  sellingPrice: number;
+  grossMarginAmount: number;
+  grossMarginPct: number;
+  templateName: string | null;
+}
+
+export async function searchProducts(input: { q?: string; status?: string }): Promise<ProductListItem[]> {
+  const { db } = await requireSession();
+
+  const where: Prisma.ProductWhereInput = {};
+  if (input.q) {
+    where.OR = [
+      { name: { contains: input.q, mode: "insensitive" } },
+      { sku: { contains: input.q, mode: "insensitive" } },
+    ];
+  }
+  if (input.status && input.status !== "") where.status = input.status as ProductStatus;
+
+  const rows = await db.product.findMany({
+    where,
+    orderBy: { grossMarginPct: "desc" },
+    include: { template: { select: { name: true } } },
+  });
+
+  return rows.map((p) => ({
+    id: p.id,
+    name: p.name,
+    sku: p.sku,
+    status: p.status,
+    totalCost: p.totalCost,
+    sellingPrice: p.sellingPrice,
+    grossMarginAmount: p.grossMarginAmount,
+    grossMarginPct: p.grossMarginPct,
+    templateName: p.template?.name ?? null,
+  }));
 }

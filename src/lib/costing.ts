@@ -27,7 +27,7 @@ export interface CostLineResult {
   lineType: LineType;
   unit: string;
   unitCost: number; // resolved unit cost actually used
-  quantity: number; // resolved quantity (brassWeight for WEIGHT lines)
+  quantity: number; // resolved quantity
   lineCost: number; // unitCost * quantity
 }
 
@@ -39,7 +39,6 @@ export interface CostResult {
 }
 
 export interface ComputeInput {
-  brassWeight: number;
   sellingPrice: number;
   snapshot: TemplateSnapshot;
   /**
@@ -63,7 +62,7 @@ function round2(n: number): number {
  * Pass no liveCosts/overrides to reproduce the "cost as of creation".
  */
 export function computeProductCost(input: ComputeInput): CostResult {
-  const { brassWeight, sellingPrice, snapshot, liveCosts, overrides } = input;
+  const { sellingPrice, snapshot, liveCosts, overrides } = input;
 
   const lines: CostLineResult[] = snapshot.lines.map((line) => {
     const unitCost =
@@ -71,7 +70,9 @@ export function computeProductCost(input: ComputeInput): CostResult {
       liveCosts?.[line.masterCostId] ??
       line.unitCostAtSnapshot;
 
-    const quantity = line.lineType === "WEIGHT" ? brassWeight : line.quantity ?? 0;
+    // Every line carries its own quantity — raw materials (WEIGHT) by weight,
+    // components/services (FIXED) by count. A missing quantity contributes nothing.
+    const quantity = line.quantity ?? 0;
     const lineCost = round2(unitCost * quantity);
 
     return {
@@ -121,3 +122,23 @@ export const HEALTH_TINT: Record<MarginHealth, string> = {
   yellow: "oklch(0.96 0.04 75)",
   green: "oklch(0.955 0.025 168)",
 };
+
+/**
+ * A product's per-line component override. Same shape as a snapshot line — a
+ * product with `comps` set is costed exactly like a template snapshot, but the
+ * quantities (raw materials included) are edited per SKU.
+ */
+export type ProductComp = SnapshotLine;
+
+// Units measured continuously accept fractional quantities (e.g. grams of brass);
+// countable units default to whole numbers. Mirrors the design's `unitMeta`.
+const FRACTIONAL_UNITS = new Set([
+  "kg", "g", "gram", "grams", "l", "ml", "litre", "liter", "m", "metre", "meter",
+  "cm", "mm", "hr", "hour", "hours", "min",
+]);
+
+/** Input `step` for a quantity field, based on the cost item's unit. */
+export function qtyStepForUnit(unit: string | null | undefined): string {
+  const u = (unit ?? "").trim().toLowerCase().split("/").pop()?.trim() ?? "";
+  return FRACTIONAL_UNITS.has(u) ? "0.001" : "1";
+}

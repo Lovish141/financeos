@@ -1,11 +1,13 @@
 import Link from "next/link";
-import { Plus, Upload, Search, Pencil, Archive, RotateCcw } from "lucide-react";
+import { Search, Archive, RotateCcw } from "lucide-react";
 import { requireSession, canEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { formatMoney } from "@/lib/utils";
+import { formatMoney, formatRelativeShort } from "@/lib/utils";
 import { archiveMasterCost, restoreMasterCost } from "@/server/actions/cost-actions";
+import { CostDrawers, NewCostButton, ImportCostButton, CostRowOpen, CostEditButton } from "./cost-drawer";
+import { CostHistoryCell } from "./cost-history-cell";
 import type { CostType, Prisma } from "@prisma/client";
 
 const GRID = "1.9fr 0.9fr 0.8fr 0.8fr 0.9fr 0.7fr 74px";
@@ -74,8 +76,8 @@ export default async function CostsPage({
         action={
           editable && (
             <div className="flex gap-2.5">
-              <Link href="/costs/import" className="btn-ghost"><Upload className="h-4 w-4" /> Import CSV</Link>
-              <Link href="/costs/new" className="btn-primary"><Plus className="h-4 w-4" /> New cost item</Link>
+              <ImportCostButton />
+              <NewCostButton />
             </div>
           )
         }
@@ -111,7 +113,7 @@ export default async function CostsPage({
         <EmptyState
           title={archivedView ? "No archived items" : "No cost items yet"}
           description="Add your raw materials, components, and services — or import a price list."
-          action={editable && <Link href="/costs/new" className="btn-primary"><Plus className="h-4 w-4" /> Add first cost</Link>}
+          action={editable && <NewCostButton />}
         />
       ) : (
         <div className="card overflow-hidden p-0">
@@ -129,20 +131,18 @@ export default async function CostsPage({
           </div>
 
           {items.map((item) => {
-            const hist = [...item.history].reverse(); // chronological
+            const hist = [...item.history].reverse(); // chronological (oldest → newest of the latest 3)
             const prev = item.history[0]?.oldValue ?? item.currentCost;
             const change = item.currentCost - prev;
             const changePct = prev ? (change / prev) * 100 : 0;
-            const series: number[] = hist.length
-              ? [hist[0].oldValue ?? item.currentCost, ...hist.map((h) => h.newValue)]
-              : [item.currentCost];
-            if (series[series.length - 1] !== item.currentCost) series.push(item.currentCost);
-            const spark = series.slice(-4);
-            const lo = Math.min(...spark);
-            const hi = Math.max(...spark);
-            const rng = hi - lo || 1;
             const changeColor = change > 0 ? "oklch(0.55 0.14 40)" : change < 0 ? "oklch(0.48 0.08 168)" : "oklch(0.62 0.01 260)";
             const sign = change > 0 ? "+" : change < 0 ? "−" : "±";
+            const historyPoints = hist.map((h) => ({
+              label: formatRelativeShort(h.createdAt),
+              value: h.newValue,
+              delta: h.oldValue != null ? h.newValue - h.oldValue : null,
+              first: h.oldValue == null,
+            }));
 
             return (
               <div
@@ -153,9 +153,9 @@ export default async function CostsPage({
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="shrink-0" style={{ width: 8, height: 8, borderRadius: "50%", background: TYPE_DOT[item.type] }} />
                   <div className="min-w-0">
-                    <Link href={`/costs/${item.id}`} className="text-[14px] font-semibold text-ink-900 hover:text-brand-700">
+                    <CostRowOpen id={item.id} className="text-left text-[14px] font-semibold text-ink-900 hover:text-brand-700">
                       {item.name}
-                    </Link>
+                    </CostRowOpen>
                     <span className="ml-2 font-mono text-[10.5px] text-ink-400">{item.unit}</span>
                   </div>
                 </div>
@@ -167,24 +167,16 @@ export default async function CostsPage({
                   {formatMoney(Math.abs(change), currency)}
                   <span className="text-[10.5px] opacity-80"> {change === 0 ? "0.0%" : `${Math.abs(changePct).toFixed(1)}%`}</span>
                 </div>
-                <div className="flex items-end justify-center gap-[2px]" style={{ height: 28 }}>
-                  {spark.map((c, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        width: 5,
-                        height: `${(8 + ((c - lo) / rng) * 20).toFixed(0)}px`,
-                        borderRadius: 2,
-                        background: i === spark.length - 1 ? TYPE_DOT[item.type] : "oklch(0.72 0.04 175)",
-                      }}
-                    />
-                  ))}
-                </div>
+                {historyPoints.length > 0 ? (
+                  <CostHistoryCell id={item.id} currency={currency} dot={TYPE_DOT[item.type]} points={historyPoints} />
+                ) : (
+                  <span className="block text-center text-ink-300">—</span>
+                )}
                 <div className="flex justify-end gap-1.5">
                   {editable && !archivedView && (
-                    <Link href={`/costs/${item.id}`} className="icon-btn" title="Edit">
-                      <Pencil className="h-[15px] w-[15px]" strokeWidth={1.9} />
-                    </Link>
+                    <CostEditButton
+                      initial={{ id: item.id, name: item.name, category: item.category, type: item.type, unit: item.unit, currentCost: item.currentCost }}
+                    />
                   )}
                   {editable && (
                     <ConfirmDialog
@@ -215,6 +207,8 @@ export default async function CostsPage({
           })}
         </div>
       )}
+
+      <CostDrawers editable={editable} />
     </div>
   );
 }

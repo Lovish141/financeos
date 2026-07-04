@@ -99,6 +99,10 @@ body {
   .btn-danger:hover {
     background: oklch(0.48 0.16 28);
   }
+  /* Compact button (design ui.ghostSm) — placed after base so padding wins */
+  .btn-sm {
+    @apply gap-1.5 rounded-[9px] px-[13px] py-[8px] text-[12.5px] font-semibold;
+  }
 
   /* Small pill used for tags/counts */
   .chip {

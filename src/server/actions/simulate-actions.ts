@@ -2,8 +2,8 @@
 
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
-import { affectedProducts, getLiveCosts } from "@/server/costing-service";
-import { computeProductCost, marginHealth, type TemplateSnapshot, type MarginHealth } from "@/lib/costing";
+import { affectedProducts, effectiveSnapshot, getLiveCosts } from "@/server/costing-service";
+import { computeProductCost, marginHealth, type MarginHealth } from "@/lib/costing";
 import { prisma } from "@/lib/prisma";
 
 export interface SimImpact {
@@ -70,16 +70,15 @@ export async function runSimulation(
   // One live-cost fetch across all affected snapshots.
   const allIds = new Set<string>();
   for (const p of products) {
-    const snap = p.templateVersion.snapshot as unknown as TemplateSnapshot;
-    snap.lines.forEach((l) => allIds.add(l.masterCostId));
+    effectiveSnapshot(p).lines.forEach((l) => allIds.add(l.masterCostId));
   }
   const liveCosts = await getLiveCosts(db, [...allIds]);
   const overrides = { [masterCostId]: newPrice };
 
   const impacts: SimImpact[] = products.map((p) => {
-    const snapshot = p.templateVersion.snapshot as unknown as TemplateSnapshot;
-    const before = computeProductCost({ brassWeight: p.brassWeight, sellingPrice: p.sellingPrice, snapshot, liveCosts });
-    const after = computeProductCost({ brassWeight: p.brassWeight, sellingPrice: p.sellingPrice, snapshot, liveCosts, overrides });
+    const snapshot = effectiveSnapshot(p);
+    const before = computeProductCost({ sellingPrice: p.sellingPrice, snapshot, liveCosts });
+    const after = computeProductCost({ sellingPrice: p.sellingPrice, snapshot, liveCosts, overrides });
     return {
       productId: p.id,
       name: p.name,

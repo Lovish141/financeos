@@ -6,6 +6,7 @@ import { saveTemplate } from "@/server/actions/template-actions";
 import { toast } from "@/components/toaster";
 import { Card } from "@/components/ui";
 import { formatCurrency } from "@/lib/utils";
+import { qtyStepForUnit } from "@/lib/costing";
 
 type MasterCost = {
   id: string;
@@ -166,7 +167,7 @@ export function TemplateEditor({
                         <input
                           type="number"
                           min="0"
-                          step="1"
+                          step={qtyStepForUnit(mc?.unit)}
                           className="input w-20"
                           value={line.quantity ?? ""}
                           disabled={!editable}
@@ -224,7 +225,7 @@ export function TemplateEditor({
               </div>
             </div>
             <p className="text-xs text-ink-400">
-              Total per SKU depends on the brass weight you enter when creating a product.
+              Total per SKU depends on the raw-material quantity you enter when creating a product.
             </p>
           </div>
 

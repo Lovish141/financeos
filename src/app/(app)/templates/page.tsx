@@ -5,15 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { marginHealth, HEALTH_COLOR } from "@/lib/costing";
-import { formatMoney, formatPercent } from "@/lib/utils";
+import { formatMoney, formatPercent, categoryColor } from "@/lib/utils";
 import { deleteTemplate } from "@/server/actions/template-actions";
-import type { CostType, Prisma } from "@prisma/client";
-
-const TYPE_DOT: Record<CostType, string> = {
-  RAW_MATERIAL: "oklch(0.58 0.12 45)",
-  COMPONENT: "oklch(0.5 0.1 250)",
-  SERVICE: "oklch(0.52 0.09 300)",
-};
+import type { Prisma } from "@prisma/client";
 
 export default async function TemplatesPage({
   searchParams,
@@ -85,7 +79,7 @@ export default async function TemplatesPage({
           action={editable && <Link href="/templates/new" className="btn-primary"><Plus className="h-4 w-4" /> New template</Link>}
         />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-[14px] lg:grid-cols-2">
           {templates.map((t) => {
             const fixedCost = t.components
               .filter((c) => c.lineType === "FIXED")
@@ -94,34 +88,29 @@ export default async function TemplatesPage({
             const avgMargin = productCount
               ? t.products.reduce((sum, p) => sum + p.grossMarginPct, 0) / productCount
               : null;
-            const marginColor = avgMargin === null ? undefined : HEALTH_COLOR[marginHealth(avgMargin, thresholds)];
+            const marginColor = avgMargin === null ? "oklch(0.34 0.01 260)" : HEALTH_COLOR[marginHealth(avgMargin, thresholds)];
+            const cat = categoryColor(t.category);
             const shown = t.components.slice(0, 6);
             const extra = t.components.length - shown.length;
 
             return (
-              <div
-                key={t.id}
-                className="card flex flex-col p-0 transition-shadow hover:shadow-card"
-              >
-                <div className="flex items-start justify-between gap-3 px-[22px] pt-[20px]">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
-                      <Boxes className="h-5 w-5" />
-                    </span>
-                    <div className="min-w-0">
-                      <Link
-                        href={`/templates/${t.id}`}
-                        className="block truncate text-[15px] font-bold tracking-[-0.01em] text-ink-900 hover:text-brand-700"
+              <div key={t.id} className="card p-[22px] transition-shadow hover:shadow-card">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Link
+                      href={`/templates/${t.id}`}
+                      className="block truncate text-[18px] font-bold tracking-[-0.02em] text-ink-900 hover:text-brand-700"
+                    >
+                      {t.name}
+                    </Link>
+                    {t.category && (
+                      <span
+                        className="mt-1.5 inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[10px] tracking-[0.06em]"
+                        style={{ color: cat.color, background: cat.bg }}
                       >
-                        {t.name}
-                      </Link>
-                      <div className="mt-1 flex items-center gap-2">
-                        {t.category && (
-                          <span className="chip bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-100">{t.category}</span>
-                        )}
-                        <span className="font-mono text-[10.5px] text-ink-400">v{t._count.versions}</span>
-                      </div>
-                    </div>
+                        {t.category}
+                      </span>
+                    )}
                   </div>
                   {editable && (
                     <div className="flex shrink-0 gap-1.5">
@@ -146,7 +135,7 @@ export default async function TemplatesPage({
                   )}
                 </div>
 
-                <div className="flex flex-wrap gap-1.5 px-[22px] py-[16px]">
+                <div className="mb-4 flex flex-wrap gap-1.5">
                   {shown.length === 0 ? (
                     <span className="text-[12.5px] text-ink-400">No lines yet</span>
                   ) : (
@@ -154,61 +143,33 @@ export default async function TemplatesPage({
                       {shown.map((c) => (
                         <span
                           key={c.id}
-                          className="inline-flex items-center gap-1.5 rounded-full border border-ink-200 bg-ink-50/70 px-2.5 py-1 text-[11.5px] font-medium text-ink-700"
+                          className="rounded-[7px] border px-[9px] py-1 text-[11.5px] font-medium"
+                          style={{ background: "oklch(0.965 0.004 250)", borderColor: "oklch(0.93 0.004 250)", color: "oklch(0.4 0.01 260)" }}
                         >
-                          <span
-                            className="shrink-0"
-                            style={{ width: 6, height: 6, borderRadius: "50%", background: TYPE_DOT[c.masterCost.type] }}
-                          />
                           {c.masterCost.name}
                         </span>
                       ))}
                       {extra > 0 && (
-                        <span className="inline-flex items-center rounded-full px-2 py-1 text-[11.5px] font-medium text-ink-400">
-                          +{extra} more
-                        </span>
+                        <span className="px-1 py-1 text-[11.5px] font-medium text-ink-400">+{extra} more</span>
                       )}
                     </>
                   )}
                 </div>
 
-                <div className="mt-auto grid grid-cols-4 border-t border-[var(--border)] text-center">
-                  <Stat label="Lines" value={String(t.components.length)} />
-                  <Stat label="Fixed cost" value={formatMoney(fixedCost, currency)} divider />
-                  <Stat label="Products" value={String(productCount)} divider />
-                  <Stat
-                    label="Avg margin"
-                    value={avgMargin === null ? "—" : formatPercent(avgMargin)}
-                    valueColor={marginColor}
-                    divider
-                  />
+                <div className="flex items-center justify-between border-t border-[var(--border)] pt-3.5 font-mono text-[11px] text-ink-500">
+                  <span>
+                    {t.components.length} lines · fixed <b className="font-semibold text-ink-700">{formatMoney(fixedCost, currency)}</b> ·{" "}
+                    {productCount} {productCount === 1 ? "SKU" : "SKUs"}
+                  </span>
+                  <span className="font-semibold" style={{ color: marginColor }}>
+                    {avgMargin === null ? "—" : formatPercent(avgMargin)} avg
+                  </span>
                 </div>
               </div>
             );
           })}
         </div>
       )}
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  valueColor,
-  divider,
-}: {
-  label: string;
-  value: string;
-  valueColor?: string;
-  divider?: boolean;
-}) {
-  return (
-    <div className={`px-2 py-[14px] ${divider ? "border-l border-[var(--border)]" : ""}`}>
-      <div className="font-mono text-[14px] font-bold tracking-[-0.01em] text-ink-900" style={valueColor ? { color: valueColor } : undefined}>
-        {value}
-      </div>
-      <div className="mt-0.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-400">{label}</div>
     </div>
   );
 }

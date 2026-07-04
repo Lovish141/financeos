@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireSession, assertCanEdit } from "@/lib/session";
+import { prisma } from "@/lib/prisma";
 import { recomputeForMasterCost } from "@/server/costing-service";
 import { validTypeUnit, TYPE_LABELS, parseMasterCostCsv } from "@/lib/csv";
 
@@ -32,7 +32,7 @@ export async function createMasterCost(
     return { error: `Unit "${data.unit}" isn't valid for a ${TYPE_LABELS[data.type]}.` };
   }
 
-  const created = await db.masterCost.create({
+  await db.masterCost.create({
     data: {
       companyId,
       name: data.name,
@@ -47,7 +47,7 @@ export async function createMasterCost(
   });
 
   revalidatePath("/costs");
-  redirect(`/costs/${created.id}?flash=${encodeURIComponent("Cost item added")}`);
+  return { ok: true };
 }
 
 export async function updateMasterCost(
@@ -103,9 +103,59 @@ export async function updateMasterCost(
   if (priceChanged) await recomputeForMasterCost(db, id);
 
   revalidatePath("/costs");
-  revalidatePath(`/costs/${id}`);
   revalidatePath("/dashboard");
-  redirect(`/costs/${id}?flash=${encodeURIComponent("Cost item updated")}`);
+  return { ok: true };
+}
+
+export interface MasterCostDetail {
+  ok: boolean;
+  error?: string;
+  id: string;
+  name: string;
+  category: string | null;
+  type: "RAW_MATERIAL" | "COMPONENT" | "SERVICE";
+  unit: string;
+  currentCost: number;
+  archived: boolean;
+  currency: string;
+  usedInTemplates: number;
+  history: { id: string; oldValue: number | null; newValue: number; by: string; at: string }[];
+}
+
+/** Preview payload for a cost item — current value + append-only price history. */
+export async function getMasterCostDetail(id: string): Promise<MasterCostDetail | { ok: false; error: string }> {
+  const { db, companyId } = await requireSession();
+
+  const item = await db.masterCost.findFirst({
+    where: { id },
+    include: {
+      history: { orderBy: { createdAt: "desc" }, include: { changedBy: { select: { name: true, email: true } } } },
+      usedInComponents: { select: { templateId: true }, distinct: ["templateId"] },
+    },
+  });
+  if (!item) return { ok: false, error: "Cost item not found." };
+
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { baseCurrency: true } });
+
+  return {
+    ok: true,
+    id: item.id,
+    name: item.name,
+    category: item.category,
+    type: item.type,
+    unit: item.unit,
+    currentCost: item.currentCost,
+    archived: item.archived,
+    currency: company?.baseCurrency ?? "INR",
+    usedInTemplates: item.usedInComponents.length,
+    history: item.history.map((h) => ({
+      id: h.id,
+      oldValue: h.oldValue,
+      newValue: h.newValue,
+      by: h.changedBy?.name ?? h.changedBy?.email ?? "System",
+      at: h.createdAt.toISOString(),
+    })),
+  };
 }
 
 export async function archiveMasterCost(id: string) {

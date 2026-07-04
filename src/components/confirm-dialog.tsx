@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition, type ReactNode } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Trash2, Archive, RotateCcw, Loader2 } from "lucide-react";
 import { toast } from "./toaster";
 
@@ -27,6 +28,7 @@ export function ConfirmDialog({
   tone = "danger",
   icon = "delete",
   toastMessage,
+  onConfirmed,
   triggerClassName,
   triggerTitle,
   children,
@@ -39,13 +41,28 @@ export function ConfirmDialog({
   icon?: keyof typeof ICONS;
   /** Fire this toast when the action does NOT redirect (e.g. archive/restore). */
   toastMessage?: string;
+  /** Called after a non-redirecting action resolves (e.g. to refresh/close a drawer). */
+  onConfirmed?: () => void;
   triggerClassName?: string;
   triggerTitle?: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const [pending, start] = useTransition();
   const Icon = ICONS[icon];
+
+  useEffect(() => setMounted(true), []);
+
+  // Close on Escape while open (unless an action is in flight).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !pending) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, pending]);
 
   const danger = tone === "danger";
   const iconTint = danger ? "oklch(0.96 0.03 30)" : "oklch(0.96 0.01 260)";
@@ -59,6 +76,7 @@ export function ConfirmDialog({
       // flash param handles their toast. Non-redirecting actions land here.
       if (toastMessage) toast(toastMessage);
       setOpen(false);
+      onConfirmed?.();
     });
   }
 
@@ -68,48 +86,53 @@ export function ConfirmDialog({
         {children}
       </button>
 
-      {open && (
-        <div
-          className="animate-fade-in fixed inset-0 z-[50] flex items-center justify-center p-6"
-          style={{ background: "oklch(0.2 0.02 260 / 0.35)", backdropFilter: "blur(3px)" }}
-          onClick={() => !pending && setOpen(false)}
-        >
+      {mounted &&
+        open &&
+        createPortal(
           <div
-            className="animate-pop w-full max-w-[400px] rounded-[18px] bg-white p-[26px]"
-            style={{ boxShadow: "0 24px 70px oklch(0.2 0.02 260 / 0.28)" }}
-            onClick={(e) => e.stopPropagation()}
+            className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center p-6"
+            style={{ background: "oklch(0.2 0.02 260 / 0.35)", backdropFilter: "blur(3px)" }}
+            onClick={() => !pending && setOpen(false)}
           >
             <div
-              className="mb-4 flex h-12 w-12 items-center justify-center rounded-[13px]"
-              style={{ background: iconTint, color: iconColor }}
+              role="dialog"
+              aria-modal="true"
+              className="animate-pop w-full max-w-[400px] rounded-[18px] bg-white p-[26px]"
+              style={{ boxShadow: "0 24px 70px oklch(0.2 0.02 260 / 0.28)" }}
+              onClick={(e) => e.stopPropagation()}
             >
-              <Icon className="h-6 w-6" strokeWidth={2} />
-            </div>
-            <h3 className="mb-2 text-[18px] font-extrabold tracking-[-0.02em] text-ink-900">{heading}</h3>
-            <p className="text-[13.5px] leading-[1.55] text-ink-500">{body}</p>
-            <div className="mt-[22px] flex gap-2.5">
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                disabled={pending}
-                className="flex flex-1 items-center justify-center rounded-[10px] border border-ink-200 bg-white py-[11px] text-[13.5px] font-semibold text-ink-700 transition-colors hover:bg-ink-50 disabled:opacity-50"
+              <div
+                className="mb-4 flex h-12 w-12 items-center justify-center rounded-[13px]"
+                style={{ background: iconTint, color: iconColor }}
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirm}
-                disabled={pending}
-                className="flex flex-1 items-center justify-center gap-2 rounded-[10px] py-[11px] text-[13.5px] font-bold text-white transition-[filter] hover:brightness-95 disabled:opacity-60"
-                style={{ background: confirmBg }}
-              >
-                {pending && <Loader2 className="h-4 w-4 animate-spin" />}
-                {pending ? "Working…" : confirmLabel}
-              </button>
+                <Icon className="h-6 w-6" strokeWidth={2} />
+              </div>
+              <h3 className="mb-2 text-[18px] font-extrabold tracking-[-0.02em] text-ink-900">{heading}</h3>
+              <p className="text-[13.5px] leading-[1.55] text-ink-500">{body}</p>
+              <div className="mt-[22px] flex gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  disabled={pending}
+                  className="flex flex-1 items-center justify-center rounded-[10px] border border-ink-200 bg-white py-[11px] text-[13.5px] font-semibold text-ink-700 transition-colors hover:bg-ink-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirm}
+                  disabled={pending}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-[10px] py-[11px] text-[13.5px] font-bold text-white transition-[filter] hover:brightness-95 disabled:opacity-60"
+                  style={{ background: confirmBg }}
+                >
+                  {pending && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {pending ? "Working…" : confirmLabel}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

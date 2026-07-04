@@ -180,7 +180,13 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
 
     const liveCosts = Object.fromEntries([...costByName.values()].map((v) => [v.id, v.cost]));
     for (const p of t.products) {
-      const result = computeProductCost({ brassWeight: p.weight, sellingPrice: p.price, snapshot, liveCosts });
+      // Per-product comps: raw-material (WEIGHT) lines take this SKU's weight.
+      const comps: SnapshotLine[] = snapshotLines.map((l) => ({
+        ...l,
+        quantity: l.lineType === "WEIGHT" ? p.weight : l.quantity,
+      }));
+      const productSnapshot: TemplateSnapshot = { ...snapshot, lines: comps };
+      const result = computeProductCost({ sellingPrice: p.price, snapshot: productSnapshot, liveCosts });
       await prisma.product.create({
         data: {
           companyId,
@@ -188,7 +194,7 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
           sku: p.sku,
           templateId: template.id,
           templateVersionId: version.id,
-          brassWeight: p.weight,
+          comps: comps as object,
           sellingPrice: p.price,
           totalCost: result.totalCost,
           grossMarginAmount: result.grossMarginAmount,

@@ -71,7 +71,7 @@ export function SettingsForm({
           </select>
         </SettingRow>
 
-        <SettingRow title="Default weight unit" desc="The unit used for the brass-weight line on templates." htmlFor="weightUnit">
+        <SettingRow title="Default weight unit" desc="Default unit for weight-based raw materials on templates." htmlFor="weightUnit">
           <input className="input" id="weightUnit" name="weightUnit" defaultValue={initial.weightUnit} />
         </SettingRow>
 
