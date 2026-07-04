@@ -4,13 +4,14 @@ import {
   computeProductCost,
   type TemplateSnapshot,
   type SnapshotLine,
+  type MasterInfo,
   type CostResult,
 } from "@/lib/costing";
 
 /**
- * Build an immutable snapshot of a template's current recipe, embedding each
- * line's unit cost as of *now*. Stored on TemplateVersion so historical product
- * costs stay reproducible even after master costs move (Module 2/3).
+ * Build a structure-only snapshot of a template's current recipe (IDs +
+ * quantities, no master-cost field copies). Stored on TemplateVersion for
+ * provenance/history — costs always resolve live at read time.
  */
 export async function buildSnapshot(
   db: TenantDb,
@@ -19,22 +20,14 @@ export async function buildSnapshot(
 ): Promise<TemplateSnapshot> {
   const template = await db.template.findFirst({
     where: { id: templateId },
-    include: {
-      components: {
-        orderBy: { sortOrder: "asc" },
-        include: { masterCost: true },
-      },
-    },
+    include: { components: { orderBy: { sortOrder: "asc" } } },
   });
   if (!template) throw new Error("Template not found");
 
   const lines: SnapshotLine[] = template.components.map((c) => ({
     masterCostId: c.masterCostId,
-    name: c.masterCost.name,
     lineType: c.lineType,
-    unit: c.masterCost.unit,
     quantity: c.quantity,
-    unitCostAtSnapshot: c.masterCost.currentCost,
   }));
 
   return {
@@ -45,17 +38,25 @@ export async function buildSnapshot(
   };
 }
 
-/** Current unit costs for a set of master costs, keyed by id (tenant-scoped). */
-export async function getLiveCosts(
+/**
+ * Live master-cost facts for a set of ids, keyed by id (tenant-scoped). The
+ * single source of truth for name/unit/cost/archived across every read path.
+ */
+export async function getLiveMasterInfo(
   db: TenantDb,
   masterCostIds: string[],
-): Promise<Record<string, number>> {
+): Promise<Record<string, MasterInfo>> {
   if (masterCostIds.length === 0) return {};
   const rows = await db.masterCost.findMany({
     where: { id: { in: masterCostIds } },
-    select: { id: true, currentCost: true },
+    select: { id: true, name: true, unit: true, type: true, currentCost: true, archived: true },
   });
-  return Object.fromEntries(rows.map((r) => [r.id, r.currentCost]));
+  return Object.fromEntries(
+    rows.map((r) => [
+      r.id,
+      { name: r.name, unit: r.unit, type: r.type, currentCost: r.currentCost, archived: r.archived },
+    ]),
+  );
 }
 
 interface ProductForCost {
@@ -66,10 +67,10 @@ interface ProductForCost {
 }
 
 /**
- * The snapshot a product is actually costed against. A product with `comps`
- * carries its own per-line list (built on / diverged from its template); a legacy
- * product falls back to its pinned template-version snapshot. Either way the
- * result is a `TemplateSnapshot`, so `computeProductCost` stays unchanged.
+ * The recipe a product is costed against. A product with `comps` carries its own
+ * per-line list (built on / diverged from its template — this is what insulates
+ * it from template edits); a legacy product falls back to its pinned
+ * template-version snapshot. Either way the result is a slim `TemplateSnapshot`.
  */
 export function effectiveSnapshot(product: ProductForCost): TemplateSnapshot {
   if (product.comps != null) {
@@ -88,48 +89,48 @@ export function effectiveSnapshot(product: ProductForCost): TemplateSnapshot {
   };
 }
 
-/** Compute a single product's cost using the live price book (+ optional overrides). */
+/** Compute a single product's cost from the live price book (+ optional overrides). */
 export async function computeForProduct(
   db: TenantDb,
   product: ProductForCost,
   overrides?: Record<string, number>,
 ): Promise<CostResult> {
   const snapshot = effectiveSnapshot(product);
-  const ids = snapshot.lines.map((l) => l.masterCostId);
-  const liveCosts = await getLiveCosts(db, ids);
+  const masterInfo = await getLiveMasterInfo(db, snapshot.lines.map((l) => l.masterCostId));
   return computeProductCost({
     sellingPrice: product.sellingPrice,
     snapshot,
-    liveCosts,
+    masterInfo,
     overrides,
   });
 }
 
-/** Recompute and persist one product's cached cost/margin fields. */
-export async function recomputeProduct(db: TenantDb, productId: string): Promise<void> {
-  const product = await db.product.findFirst({
-    where: { id: productId },
-    include: { templateVersion: true, template: { select: { name: true, category: true } } },
-  });
-  if (!product) return;
+/**
+ * Batch compute-on-read for a set of products — one price-book lookup for all of
+ * them (avoids N+1 on the product list + dashboard). Returns a map by product id.
+ */
+export async function computeProductsLive<T extends ProductForCost & { id: string }>(
+  db: TenantDb,
+  products: T[],
+): Promise<Map<string, CostResult>> {
+  const ids = new Set<string>();
+  for (const p of products) {
+    for (const l of effectiveSnapshot(p).lines) ids.add(l.masterCostId);
+  }
+  const masterInfo = await getLiveMasterInfo(db, [...ids]);
 
-  const result = await computeForProduct(db, product);
-
-  await db.product.update({
-    where: { id: productId },
-    data: {
-      totalCost: result.totalCost,
-      grossMarginAmount: result.grossMarginAmount,
-      grossMarginPct: result.grossMarginPct,
-      costComputedAt: new Date(),
-    },
-  });
+  const out = new Map<string, CostResult>();
+  for (const p of products) {
+    const snapshot = effectiveSnapshot(p);
+    out.set(p.id, computeProductCost({ sellingPrice: p.sellingPrice, snapshot, masterInfo }));
+  }
+  return out;
 }
 
 /**
- * Fan-out set for a master cost change (Module 5, technical note): every product
- * whose template currently references this master cost. The
- * TemplateComponent.masterCostId index keeps this fast at scale.
+ * Every product whose recipe references a given master cost — via a template it's
+ * built on (indexed) or directly in its per-product comps (JSON, filtered in
+ * memory). Used by the impact warning and the what-if simulator (Module 5).
  */
 export async function affectedProducts(db: TenantDb, masterCostId: string) {
   const include = {
@@ -157,28 +158,4 @@ export async function affectedProducts(db: TenantDb, masterCostId: string) {
   });
 
   return [...viaTemplate, ...viaComps];
-}
-
-/**
- * Real incremental recompute after an actual price change. Same traversal path
- * the simulator uses — persists the new cached values for every affected SKU.
- */
-export async function recomputeForMasterCost(
-  db: TenantDb,
-  masterCostId: string,
-): Promise<number> {
-  const products = await affectedProducts(db, masterCostId);
-  for (const product of products) {
-    const result = await computeForProduct(db, product);
-    await db.product.update({
-      where: { id: product.id },
-      data: {
-        totalCost: result.totalCost,
-        grossMarginAmount: result.grossMarginAmount,
-        grossMarginPct: result.grossMarginPct,
-        costComputedAt: new Date(),
-      },
-    });
-  }
-  return products.length;
 }

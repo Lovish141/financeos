@@ -3,6 +3,7 @@ import { Coins, Boxes, Package, Search as SearchIcon } from "lucide-react";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, Card, Badge, EmptyState } from "@/components/ui";
+import { computeProductsLive } from "@/server/costing-service";
 import { formatCurrency } from "@/lib/utils";
 
 export default async function SearchPage({
@@ -40,9 +41,15 @@ export default async function SearchPage({
     db.product.findMany({
       where: { OR: [{ name: { contains: query, mode: "insensitive" } }, { sku: { contains: query, mode: "insensitive" } }] },
       take: 8,
-      select: { id: true, name: true, sku: true, grossMarginPct: true },
+      select: {
+        id: true, name: true, sku: true, sellingPrice: true, comps: true,
+        templateVersion: true, template: { select: { name: true, category: true } },
+      },
     }),
   ]);
+
+  // Margin resolves live from the price book (no cached column).
+  const productCosts = await computeProductsLive(db, products);
 
   const total = costs.length + templates.length + products.length;
 
@@ -82,7 +89,7 @@ export default async function SearchPage({
                     <span className="font-medium text-ink-900">{p.name}</span>
                     <span className="ml-2 text-xs text-ink-400">{p.sku}</span>
                   </span>
-                  <span className="text-sm text-ink-500">{p.grossMarginPct.toFixed(1)}% margin</span>
+                  <span className="text-sm text-ink-500">{(productCosts.get(p.id)?.grossMarginPct ?? 0).toFixed(1)}% margin</span>
                 </Link>
               ))}
             </Section>

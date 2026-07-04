@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, RotateCcw, X } from "lucide-react";
+import { Loader2, RotateCcw, X, AlertTriangle } from "lucide-react";
 import { Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerSkeleton } from "@/components/drawer";
 import { toast } from "@/components/toaster";
 import {
@@ -33,7 +33,7 @@ export type TemplateOption = {
 export type MasterCostOption = { id: string; name: string; type: string; unit: string; currentCost: number };
 
 type Row = { masterCostId: string; qty: string };
-type Meta = { name: string; type: string; unit: string; currentCost: number };
+type Meta = { name: string; type: string; unit: string; currentCost: number; archived: boolean };
 
 export function ProductFormDrawer({
   open,
@@ -65,11 +65,12 @@ export function ProductFormDrawer({
   const [error, setError] = useState<string | null>(null);
 
   const catalogById = useMemo(
-    () => new Map(masterCosts.map((m) => [m.id, m as Meta])),
+    // Add-pool items are always non-archived (the page excludes archived).
+    () => new Map(masterCosts.map((m) => [m.id, { ...m, archived: false } as Meta])),
     [masterCosts],
   );
   const meta = (id: string): Meta =>
-    catalogById.get(id) ?? extraMeta[id] ?? { name: "Unknown item", type: "COMPONENT", unit: "pc", currentCost: 0 };
+    catalogById.get(id) ?? extraMeta[id] ?? { name: "Unknown item", type: "COMPONENT", unit: "pc", currentCost: 0, archived: false };
 
   const seedFromTemplate = (tid: string): Row[] => {
     if (!tid) return [];
@@ -108,7 +109,7 @@ export function ProductFormDrawer({
         setRows(d.comps.map((c) => ({ masterCostId: c.masterCostId, qty: String(c.quantity) })));
         setExtraMeta(
           Object.fromEntries(
-            d.comps.map((c) => [c.masterCostId, { name: c.name, type: c.type, unit: c.unit, currentCost: c.currentCost }]),
+            d.comps.map((c) => [c.masterCostId, { name: c.name, type: c.type, unit: c.unit, currentCost: c.currentCost, archived: c.archived }]),
           ),
         );
         setLoading(false);
@@ -133,7 +134,11 @@ export function ProductFormDrawer({
     setRows((prev) => [...prev, { masterCostId: id, qty: "1" }]);
   }
 
-  const totalCost = rows.reduce((sum, r) => sum + meta(r.masterCostId).currentCost * (parseFloat(r.qty) || 0), 0);
+  // Archived items are excluded from the total (counted as 0) — Live Reference.
+  const totalCost = rows.reduce((sum, r) => {
+    const m = meta(r.masterCostId);
+    return sum + (m.archived ? 0 : m.currentCost * (parseFloat(r.qty) || 0));
+  }, 0);
   const priceNum = parseFloat(price) || 0;
   const marginRs = priceNum - totalCost;
   const marginPct = priceNum > 0 ? (marginRs / priceNum) * 100 : 0;
@@ -230,13 +235,23 @@ export function ProductFormDrawer({
               )}
               {rows.map((r) => {
                 const m = meta(r.masterCostId);
-                const lineTotal = m.currentCost * (parseFloat(r.qty) || 0);
+                const lineTotal = m.archived ? 0 : m.currentCost * (parseFloat(r.qty) || 0);
                 return (
                   <div key={r.masterCostId} className="flex items-center gap-2.5 border-b border-[oklch(0.96_0.003_250)] px-3.5 py-2.5 last:border-0">
-                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: TYPE_DOT[m.type] ?? TYPE_DOT.COMPONENT }} />
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: m.archived ? "oklch(0.7 0.1 65)" : TYPE_DOT[m.type] ?? TYPE_DOT.COMPONENT }} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-semibold text-ink-900">{m.name}</div>
-                      <div className="font-mono text-[10px] text-ink-400">{TYPE_LABEL[m.type] ?? "Component"}</div>
+                      <div className={`truncate text-[13px] font-semibold ${m.archived ? "text-ink-400" : "text-ink-900"}`}>{m.name}</div>
+                      {m.archived ? (
+                        <div
+                          className="mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-medium"
+                          style={{ background: "oklch(0.96 0.04 75)", color: "oklch(0.45 0.1 65)" }}
+                        >
+                          <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2} />
+                          Needs attention — cost archived
+                        </div>
+                      ) : (
+                        <div className="font-mono text-[10px] text-ink-400">{TYPE_LABEL[m.type] ?? "Component"}</div>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5">
                       <input

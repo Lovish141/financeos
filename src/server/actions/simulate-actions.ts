@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
-import { affectedProducts, effectiveSnapshot, getLiveCosts } from "@/server/costing-service";
+import { affectedProducts, effectiveSnapshot, getLiveMasterInfo } from "@/server/costing-service";
 import { computeProductCost, marginHealth, type MarginHealth } from "@/lib/costing";
 import { prisma } from "@/lib/prisma";
 
@@ -67,18 +67,18 @@ export async function runSimulation(
 
   const products = await affectedProducts(db, masterCostId);
 
-  // One live-cost fetch across all affected snapshots.
+  // One live master-info fetch across all affected snapshots.
   const allIds = new Set<string>();
   for (const p of products) {
     effectiveSnapshot(p).lines.forEach((l) => allIds.add(l.masterCostId));
   }
-  const liveCosts = await getLiveCosts(db, [...allIds]);
+  const masterInfo = await getLiveMasterInfo(db, [...allIds]);
   const overrides = { [masterCostId]: newPrice };
 
   const impacts: SimImpact[] = products.map((p) => {
     const snapshot = effectiveSnapshot(p);
-    const before = computeProductCost({ sellingPrice: p.sellingPrice, snapshot, liveCosts });
-    const after = computeProductCost({ sellingPrice: p.sellingPrice, snapshot, liveCosts, overrides });
+    const before = computeProductCost({ sellingPrice: p.sellingPrice, snapshot, masterInfo });
+    const after = computeProductCost({ sellingPrice: p.sellingPrice, snapshot, masterInfo, overrides });
     return {
       productId: p.id,
       name: p.name,

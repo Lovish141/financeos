@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { EmptyState } from "@/components/ui";
 import { marginHealth, HEALTH_COLOR } from "@/lib/costing";
+import { computeProductsLive } from "@/server/costing-service";
 import { formatMoney, formatPercent, formatDate } from "@/lib/utils";
 import { CategoryChart } from "./category-chart";
 import { ExportButton } from "./export-button";
@@ -29,18 +30,34 @@ export default async function DashboardPage() {
   const thr = Math.round(thresholds.marginRedThreshold); // margin-at-risk threshold
   const goal = MARGIN_GOAL_PCT;
 
-  const [products, masterCount, templateCount] = await Promise.all([
+  const [productRows, masterCount, templateCount] = await Promise.all([
     db.product.findMany({
       where: { status: { not: "DISCONTINUED" } },
       select: {
-        id: true, name: true, sku: true, totalCost: true, sellingPrice: true,
-        grossMarginAmount: true, grossMarginPct: true,
+        id: true, name: true, sku: true, sellingPrice: true, comps: true,
+        templateVersion: true,
         template: { select: { name: true, category: true } },
       },
     }),
     db.masterCost.count({ where: { archived: false } }),
     db.template.count(),
   ]);
+
+  // Compute-on-read from the live price book — no cached cost columns.
+  const costs = await computeProductsLive(db, productRows);
+  const products = productRows.map((p) => {
+    const c = costs.get(p.id)!;
+    return {
+      id: p.id,
+      name: p.name,
+      sku: p.sku,
+      sellingPrice: p.sellingPrice,
+      template: p.template,
+      totalCost: c.totalCost,
+      grossMarginAmount: c.grossMarginAmount,
+      grossMarginPct: c.grossMarginPct,
+    };
+  });
 
   if (products.length === 0) {
     return (

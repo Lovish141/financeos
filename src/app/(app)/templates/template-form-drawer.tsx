@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Scale, Boxes, Trash2, Loader2 } from "lucide-react";
+import { Plus, Scale, Boxes, Trash2, Loader2, AlertTriangle } from "lucide-react";
 import { Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerSkeleton } from "@/components/drawer";
 import { toast } from "@/components/toaster";
 import { getTemplateDraft, saveTemplateForm } from "@/server/actions/template-actions";
@@ -14,6 +14,7 @@ export type MasterCostOption = {
   type: "RAW_MATERIAL" | "COMPONENT" | "SERVICE";
   unit: string;
   currentCost: number;
+  archived: boolean;
 };
 
 type Line = { masterCostId: string; lineType: "WEIGHT" | "FIXED"; quantity: number | null };
@@ -45,8 +46,9 @@ export function TemplateFormDrawer({
   const [error, setError] = useState<string | null>(null);
 
   const costById = useMemo(() => new Map(masterCosts.map((m) => [m.id, m])), [masterCosts]);
-  const rawMaterials = useMemo(() => masterCosts.filter((m) => m.type === "RAW_MATERIAL"), [masterCosts]);
-  const others = useMemo(() => masterCosts.filter((m) => m.type !== "RAW_MATERIAL"), [masterCosts]);
+  // Add-pools exclude archived items — they can't be chosen for new lines.
+  const rawMaterials = useMemo(() => masterCosts.filter((m) => m.type === "RAW_MATERIAL" && !m.archived), [masterCosts]);
+  const others = useMemo(() => masterCosts.filter((m) => m.type !== "RAW_MATERIAL" && !m.archived), [masterCosts]);
 
   useEffect(() => {
     if (!open) return;
@@ -90,12 +92,17 @@ export function TemplateFormDrawer({
     setLines((prev) => prev.filter((_, i) => i !== idx));
   }
 
+  // Archived items resolve to 0 (Live Reference Architecture).
+  const liveCost = (id: string) => {
+    const mc = costById.get(id);
+    return mc && !mc.archived ? mc.currentCost : 0;
+  };
   const fixedTotal = lines
     .filter((l) => l.lineType === "FIXED")
-    .reduce((sum, l) => sum + (costById.get(l.masterCostId)?.currentCost ?? 0) * (l.quantity ?? 0), 0);
+    .reduce((sum, l) => sum + liveCost(l.masterCostId) * (l.quantity ?? 0), 0);
   const weightRate = lines
     .filter((l) => l.lineType === "WEIGHT")
-    .reduce((sum, l) => sum + (costById.get(l.masterCostId)?.currentCost ?? 0), 0);
+    .reduce((sum, l) => sum + liveCost(l.masterCostId), 0);
 
   async function handleSave() {
     setError(null);
@@ -170,43 +177,60 @@ export function TemplateFormDrawer({
                   const mc = costById.get(line.masterCostId);
                   const pool = line.lineType === "WEIGHT" ? rawMaterials : others;
                   const isWeight = line.lineType === "WEIGHT";
+                  const archived = mc?.archived ?? false;
                   return (
                     <div key={idx} className="flex items-center gap-2.5 border-b border-[oklch(0.96_0.003_250)] px-3.5 py-2.5 last:border-0">
                       <span
-                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${isWeight ? "bg-brand-50 text-brand-600" : "bg-ink-100 text-ink-500"}`}
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${archived ? "bg-ink-100 text-ink-400" : isWeight ? "bg-brand-50 text-brand-600" : "bg-ink-100 text-ink-500"}`}
                       >
                         {isWeight ? <Scale className="h-4 w-4" /> : <Boxes className="h-4 w-4" />}
                       </span>
-                      <select
-                        className="input flex-1 text-[13px]"
-                        value={line.masterCostId}
-                        onChange={(e) => updateLine(idx, { masterCostId: e.target.value })}
-                      >
-                        {pool.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name} — {formatCurrency(m.currentCost, currency)}/{m.unit}
-                          </option>
-                        ))}
-                      </select>
-                      {isWeight ? (
-                        <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-400">per {weightUnit}</span>
-                      ) : (
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <input
-                            type="number"
-                            min="0"
-                            step={qtyStepForUnit(mc?.unit)}
-                            value={line.quantity ?? ""}
-                            onChange={(e) => updateLine(idx, { quantity: e.target.value === "" ? null : Number(e.target.value) })}
-                            className="w-[66px] rounded-lg border border-ink-300 px-2 py-1.5 text-right font-mono text-[13px] font-semibold text-ink-900 outline-none focus:border-brand-400"
-                          />
-                          <span className="w-[36px] font-mono text-[11px] text-ink-500">{mc?.unit}</span>
+                      {archived ? (
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13px] font-semibold text-ink-400">{mc?.name ?? "Archived item"}</div>
+                          <div
+                            className="mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-medium"
+                            style={{ background: "oklch(0.96 0.04 75)", color: "oklch(0.45 0.1 65)" }}
+                          >
+                            <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2} />
+                            Needs attention — cost archived
+                          </div>
                         </div>
+                      ) : (
+                        <select
+                          className="input flex-1 text-[13px]"
+                          value={line.masterCostId}
+                          onChange={(e) => updateLine(idx, { masterCostId: e.target.value })}
+                        >
+                          {pool.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name} — {formatCurrency(m.currentCost, currency)}/{m.unit}
+                            </option>
+                          ))}
+                        </select>
                       )}
-                      <span className="w-[64px] shrink-0 text-right font-mono text-[13px] font-semibold text-ink-900">
-                        {isWeight
-                          ? `${formatCurrency(mc?.currentCost ?? 0, currency)}`
-                          : formatCurrency((mc?.currentCost ?? 0) * (line.quantity ?? 0), currency)}
+                      {!archived &&
+                        (isWeight ? (
+                          <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-400">per {weightUnit}</span>
+                        ) : (
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <input
+                              type="number"
+                              min="0"
+                              step={qtyStepForUnit(mc?.unit)}
+                              value={line.quantity ?? ""}
+                              onChange={(e) => updateLine(idx, { quantity: e.target.value === "" ? null : Number(e.target.value) })}
+                              className="w-[66px] rounded-lg border border-ink-300 px-2 py-1.5 text-right font-mono text-[13px] font-semibold text-ink-900 outline-none focus:border-brand-400"
+                            />
+                            <span className="w-[36px] font-mono text-[11px] text-ink-500">{mc?.unit}</span>
+                          </div>
+                        ))}
+                      <span className={`w-[64px] shrink-0 text-right font-mono text-[13px] font-semibold ${archived ? "text-ink-400" : "text-ink-900"}`}>
+                        {archived
+                          ? formatCurrency(0, currency)
+                          : isWeight
+                            ? `${formatCurrency(mc?.currentCost ?? 0, currency)}`
+                            : formatCurrency((mc?.currentCost ?? 0) * (line.quantity ?? 0), currency)}
                       </span>
                       <button
                         type="button"

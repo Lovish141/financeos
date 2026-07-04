@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, AlertTriangle } from "lucide-react";
 import { Drawer, DrawerBody, DrawerCloseButton, DrawerSkeleton } from "@/components/drawer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { deleteProduct, getProductBreakdown, type ProductBreakdown } from "@/server/actions/product-actions";
@@ -31,13 +31,19 @@ export function ProductPreviewDrawer({
     let active = true;
     setLoading(true);
     setData(null);
-    getProductBreakdown(productId).then((res) => {
-      if (!active) return;
-      setData(res.ok ? (res as ProductBreakdown) : null);
-      setLoading(false);
+    // Defer past the router transition: a server action invoked *during* a
+    // client-side navigation (e.g. a deep link clicked from another page) is
+    // dropped by Next and its promise never settles. rAF fires it after commit.
+    const raf = requestAnimationFrame(() => {
+      getProductBreakdown(productId).then((res) => {
+        if (!active) return;
+        setData(res.ok ? (res as ProductBreakdown) : null);
+        setLoading(false);
+      });
     });
     return () => {
       active = false;
+      cancelAnimationFrame(raf);
     };
   }, [open, productId]);
 
@@ -113,8 +119,14 @@ export function ProductPreviewDrawer({
               {data.lines.map((l, i) => (
                 <div key={l.masterCostId} className="flex items-center gap-3 border-b border-[oklch(0.96_0.003_250)] py-[11px] last:border-0">
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ink-900">{l.name}</div>
-                    <div className="mt-0.5 font-mono text-[10.5px] text-ink-400">{l.detail}</div>
+                    <div className={`truncate text-[13.5px] font-semibold tracking-[-0.01em] ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`}>
+                      {l.name}
+                    </div>
+                    {l.needsAttention ? (
+                      <NeedsAttention archived={l.archived} />
+                    ) : (
+                      <div className="mt-0.5 font-mono text-[10.5px] text-ink-400">{l.detail}</div>
+                    )}
                   </div>
                   <div className="h-[5px] w-[70px] overflow-hidden rounded" style={{ background: "oklch(0.95 0.003 250)" }}>
                     <div
@@ -122,7 +134,7 @@ export function ProductPreviewDrawer({
                       style={{ width: `${Math.min(100, l.sharePct)}%`, background: i === 0 ? "oklch(0.5 0.08 172)" : "oklch(0.72 0.02 260)" }}
                     />
                   </div>
-                  <div className="w-[66px] text-right font-mono text-[13px] font-semibold text-ink-900">
+                  <div className={`w-[66px] text-right font-mono text-[13px] font-semibold ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`}>
                     {formatCurrency(l.lineCost, data.currency)}
                   </div>
                 </div>
@@ -148,6 +160,18 @@ export function ProductPreviewDrawer({
         )}
       </DrawerBody>
     </Drawer>
+  );
+}
+
+export function NeedsAttention({ archived }: { archived: boolean }) {
+  return (
+    <div
+      className="mt-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[10px] font-medium"
+      style={{ background: "oklch(0.96 0.04 75)", color: "oklch(0.45 0.1 65)" }}
+    >
+      <AlertTriangle className="h-3 w-3" strokeWidth={2} />
+      Needs attention — {archived ? "cost archived" : "cost removed"}
+    </div>
   );
 }
 

@@ -6,12 +6,16 @@ import { z } from "zod";
 import { requireSession, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
-  computeProductCost,
   marginHealth,
   type ProductComp,
   type MarginHealth,
 } from "@/lib/costing";
-import { computeForProduct, effectiveSnapshot, getLiveCosts } from "@/server/costing-service";
+import {
+  computeForProduct,
+  computeProductsLive,
+  effectiveSnapshot,
+  getLiveMasterInfo,
+} from "@/server/costing-service";
 import { toSkuToken, formatCurrency } from "@/lib/utils";
 import type { ActionResult } from "./cost-actions";
 import type { Prisma, ProductStatus } from "@prisma/client";
@@ -62,22 +66,23 @@ async function buildComps(
   if (raw.length === 0) return { error: "Add at least one component to the product." };
 
   const ids = [...new Set(raw.map((r) => r.masterCostId))];
+  // Only the id + type are needed — everything else resolves live at read time.
+  // Archived items are allowed here (archived ≠ deleted) so an existing product
+  // that still references one can be saved.
   const masters = await db.masterCost.findMany({
     where: { id: { in: ids } },
-    select: { id: true, name: true, unit: true, currentCost: true, type: true },
+    select: { id: true, type: true },
   });
   const byId = new Map(masters.map((m) => [m.id, m]));
   if (byId.size !== ids.length) return { error: "One or more components no longer exist." };
 
+  // Slim comps — IDs + quantity only (Live Reference Architecture).
   const comps: ProductComp[] = raw.map((r) => {
     const mc = byId.get(r.masterCostId)!;
     return {
       masterCostId: mc.id,
-      name: mc.name,
       lineType: mc.type === "RAW_MATERIAL" ? "WEIGHT" : "FIXED",
-      unit: mc.unit,
       quantity: r.quantity,
-      unitCostAtSnapshot: mc.currentCost,
     };
   });
 
@@ -100,28 +105,6 @@ async function buildComps(
     templateVersionId,
     templateName: templateLink?.name ?? null,
     category: templateLink?.category ?? null,
-  };
-}
-
-/** Cached cost/margin fields for a set of comps + price. */
-async function cachedFields(
-  db: Db,
-  comps: ProductComp[],
-  templateName: string | null,
-  category: string | null,
-  sellingPrice: number,
-) {
-  const liveCosts = await getLiveCosts(db, comps.map((c) => c.masterCostId));
-  const result = computeProductCost({
-    sellingPrice,
-    snapshot: { version: 0, templateName: templateName ?? "Custom", category, lines: comps },
-    liveCosts,
-  });
-  return {
-    totalCost: result.totalCost,
-    grossMarginAmount: result.grossMarginAmount,
-    grossMarginPct: result.grossMarginPct,
-    costComputedAt: new Date(),
   };
 }
 
@@ -156,7 +139,6 @@ export async function createProduct(
   const built = await buildComps(db, data.templateId || undefined, compsParsed.data);
   if ("error" in built) return { error: built.error };
 
-  const fields = await cachedFields(db, built.comps, built.templateName, built.category, data.sellingPrice);
   const sku = await uniqueSku(db, data.sku?.trim() || toSkuToken(data.name));
 
   await db.product.create({
@@ -169,7 +151,6 @@ export async function createProduct(
       comps: built.comps as object,
       sellingPrice: data.sellingPrice,
       status: data.status ?? "ACTIVE",
-      ...fields,
     },
   });
 
@@ -199,8 +180,6 @@ export async function updateProduct(
   const built = await buildComps(db, data.templateId || undefined, compsParsed.data);
   if ("error" in built) return { error: built.error };
 
-  const fields = await cachedFields(db, built.comps, built.templateName, built.category, data.sellingPrice);
-
   await db.product.update({
     where: { id },
     data: {
@@ -210,7 +189,6 @@ export async function updateProduct(
       comps: built.comps as object,
       sellingPrice: data.sellingPrice,
       status: data.status,
-      ...fields,
     },
   });
 
@@ -247,7 +225,15 @@ export interface ProductBreakdown {
   grossMarginAmount: number;
   grossMarginPct: number;
   health: MarginHealth;
-  lines: { masterCostId: string; name: string; detail: string; lineCost: number; sharePct: number }[];
+  lines: {
+    masterCostId: string;
+    name: string;
+    detail: string;
+    lineCost: number;
+    sharePct: number;
+    archived: boolean;
+    needsAttention: boolean;
+  }[];
 }
 
 /** Preview payload for a single product — reuses the shared costing engine. */
@@ -291,9 +277,15 @@ export async function getProductBreakdown(id: string): Promise<ProductBreakdown 
     lines: result.lines.map((l) => ({
       masterCostId: l.masterCostId,
       name: l.name,
-      detail: `${l.quantity}${l.lineType === "WEIGHT" ? " " + weightUnit : " " + l.unit} × ${formatCurrency(l.unitCost, currency)}`,
+      detail: l.needsAttention
+        ? l.attentionReason === "archived"
+          ? "Archived — excluded from total"
+          : "Removed — excluded from total"
+        : `${l.quantity}${l.lineType === "WEIGHT" ? " " + weightUnit : " " + l.unit} × ${formatCurrency(l.unitCost, currency)}`,
       lineCost: l.lineCost,
-      sharePct: Math.round((l.lineCost / total) * 100),
+      sharePct: total > 0 ? Math.round((l.lineCost / total) * 100) : 0,
+      archived: l.archived,
+      needsAttention: l.needsAttention,
     })),
   };
 }
@@ -305,6 +297,7 @@ export interface DraftComp {
   type: string;
   unit: string;
   currentCost: number;
+  archived: boolean;
 }
 
 export interface ProductDraft {
@@ -329,22 +322,18 @@ export async function getProductDraft(id: string): Promise<ProductDraft | { ok: 
   if (!product) return { ok: false, error: "Product not found." };
 
   const snapshot = effectiveSnapshot(product);
-  const ids = snapshot.lines.map((l) => l.masterCostId);
-  const masters = await db.masterCost.findMany({
-    where: { id: { in: ids } },
-    select: { id: true, name: true, type: true, unit: true, currentCost: true },
-  });
-  const byId = new Map(masters.map((m) => [m.id, m]));
+  const info = await getLiveMasterInfo(db, snapshot.lines.map((l) => l.masterCostId));
 
   const comps: DraftComp[] = snapshot.lines.map((l) => {
-    const mc = byId.get(l.masterCostId);
+    const mc = info[l.masterCostId];
     return {
       masterCostId: l.masterCostId,
       quantity: l.quantity ?? 0,
-      name: mc?.name ?? l.name,
+      name: mc?.name ?? "Removed item",
       type: mc?.type ?? (l.lineType === "WEIGHT" ? "RAW_MATERIAL" : "COMPONENT"),
-      unit: mc?.unit ?? l.unit,
-      currentCost: mc?.currentCost ?? l.unitCostAtSnapshot,
+      unit: mc?.unit ?? "",
+      currentCost: mc?.currentCost ?? 0,
+      archived: mc?.archived ?? false,
     };
   });
 
@@ -390,19 +379,27 @@ export async function searchProducts(input: { q?: string; status?: string }): Pr
 
   const rows = await db.product.findMany({
     where,
-    orderBy: { grossMarginPct: "desc" },
-    include: { template: { select: { name: true } } },
+    include: { template: { select: { name: true, category: true } }, templateVersion: true },
   });
 
-  return rows.map((p) => ({
-    id: p.id,
-    name: p.name,
-    sku: p.sku,
-    status: p.status,
-    totalCost: p.totalCost,
-    sellingPrice: p.sellingPrice,
-    grossMarginAmount: p.grossMarginAmount,
-    grossMarginPct: p.grossMarginPct,
-    templateName: p.template?.name ?? null,
-  }));
+  // Compute-on-read from the live price book, then sort by margin in app (no
+  // cached cost columns — Live Reference Architecture).
+  const costs = await computeProductsLive(db, rows);
+
+  return rows
+    .map((p) => {
+      const c = costs.get(p.id)!;
+      return {
+        id: p.id,
+        name: p.name,
+        sku: p.sku,
+        status: p.status,
+        totalCost: c.totalCost,
+        sellingPrice: p.sellingPrice,
+        grossMarginAmount: c.grossMarginAmount,
+        grossMarginPct: c.grossMarginPct,
+        templateName: p.template?.name ?? null,
+      };
+    })
+    .sort((a, b) => b.grossMarginPct - a.grossMarginPct);
 }

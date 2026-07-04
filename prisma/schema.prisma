@@ -213,7 +213,10 @@ model TemplateVersion {
   template   Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   version  Int
-  snapshot Json // { version, templateName, category, lines: [{ masterCostId, name, lineType, unit, quantity, unitCostAtSnapshot }] }
+  // Structure-only snapshot (Live Reference Architecture): IDs + quantities, no
+  // master-cost field copies. Kept for provenance/history; costs resolve live.
+  // { version, templateName, category, lines: [{ masterCostId, lineType, quantity }] }
+  snapshot Json
 
   products Product[]
 
@@ -247,20 +250,19 @@ model Product {
   templateVersionId String?
   templateVersion   TemplateVersion? @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
 
-  // Per-product effective component list — an array of SnapshotLine
-  // ({ masterCostId, name, lineType, unit, quantity, unitCostAtSnapshot }). When
-  // null the product inherits its templateVersion snapshot (legacy products).
+  // Per-product effective component list — slim, IDs only (Live Reference
+  // Architecture): [{ masterCostId, lineType, quantity }]. This is the product's
+  // own recipe, which insulates it from template edits; every field (name/unit/
+  // cost) resolves live from MasterCost at read time. Null => inherit the pinned
+  // templateVersion snapshot (legacy products).
   comps Json?
 
   // Reality supplied at the SKU level (Module 3). Per-line quantities — raw
   // materials by weight included — live on each line in `comps`.
   sellingPrice Float
 
-  // Cached costing outputs — recomputed on any upstream change (Module 3/5).
-  totalCost         Float @default(0)
-  grossMarginAmount Float @default(0)
-  grossMarginPct    Float @default(0)
-  costComputedAt    DateTime @default(now())
+  // No cached cost/margin columns — cost & margin are computed on read from the
+  // live price book everywhere they're shown (Live Reference Architecture).
 
   status ProductStatus @default(ACTIVE)
 
@@ -269,5 +271,4 @@ model Product {
 
   @@unique([companyId, sku])
   @@index([companyId, templateId])
-  @@index([companyId, grossMarginPct])
 }

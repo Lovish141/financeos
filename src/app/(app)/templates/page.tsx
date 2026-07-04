@@ -15,10 +15,11 @@ export default async function TemplatesPage({
 
   const [initialTemplates, masterCosts, company] = await Promise.all([
     searchTemplates({ q: sp.q }),
+    // Include archived so an existing recipe line that references one can still
+    // render (flagged); the form filters archived out of the add-pool.
     db.masterCost.findMany({
-      where: { archived: false },
       orderBy: { name: "asc" },
-      select: { id: true, name: true, type: true, unit: true, currentCost: true },
+      select: { id: true, name: true, type: true, unit: true, currentCost: true, archived: true },
     }),
     prisma.company.findUnique({
       where: { id: companyId },

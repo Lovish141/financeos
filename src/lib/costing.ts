@@ -5,13 +5,15 @@
 
 export type LineType = "WEIGHT" | "FIXED";
 
+/**
+ * A recipe line — IDs only. Master-cost fields (name, unit, cost) are NEVER
+ * copied here; they resolve live from the price book at read time via the
+ * `masterInfo` map on `ComputeInput` (Master Cost — Live Reference Architecture).
+ */
 export interface SnapshotLine {
   masterCostId: string;
-  name: string;
   lineType: LineType;
-  unit: string;
-  quantity: number | null; // null for WEIGHT lines
-  unitCostAtSnapshot: number;
+  quantity: number | null; // null for WEIGHT template lines (weight supplied per-product)
 }
 
 export interface TemplateSnapshot {
@@ -21,14 +23,29 @@ export interface TemplateSnapshot {
   lines: SnapshotLine[];
 }
 
+/** Live master-cost facts, resolved at read time and keyed by masterCostId. */
+export interface MasterInfo {
+  name: string;
+  unit: string;
+  type: "RAW_MATERIAL" | "COMPONENT" | "SERVICE";
+  currentCost: number;
+  archived: boolean;
+}
+
+/** Why a line is excluded from the total (contributes 0). */
+export type AttentionReason = "archived" | "removed";
+
 export interface CostLineResult {
   masterCostId: string;
   name: string;
   lineType: LineType;
   unit: string;
-  unitCost: number; // resolved unit cost actually used
+  unitCost: number; // resolved unit cost actually used (0 when excluded)
   quantity: number; // resolved quantity
   lineCost: number; // unitCost * quantity
+  archived: boolean;
+  needsAttention: boolean; // archived or removed — flagged in the UI, excluded from total
+  attentionReason: AttentionReason | null;
 }
 
 export interface CostResult {
@@ -42,18 +59,13 @@ export interface ComputeInput {
   sellingPrice: number;
   snapshot: TemplateSnapshot;
   /**
-   * Live unit costs keyed by masterCostId. A line whose id is absent falls back
-   * to `unitCostAtSnapshot` — either because the id no longer resolves (the
-   * master cost was deleted) or because liveCosts is omitted entirely to
-   * reproduce the "cost as of creation".
-   *
-   * Note: archiving a master cost does NOT drop it from liveCosts. An archived
-   * cost still contributes its current price, so archiving is a catalog-only
-   * soft-hide and never silently re-costs a product (cost only moves on a price
-   * edit, which writes a CostHistory row).
+   * Live master-cost facts keyed by masterCostId — the single source of truth
+   * for name/unit/cost/archived. A line whose id is absent (the master cost was
+   * deleted) or whose master is archived contributes 0 and is flagged as
+   * needing attention. There is no snapshotted fallback: nothing is stale.
    */
-  liveCosts?: Record<string, number>;
-  /** Hypothetical overrides (simulation). Take precedence over liveCosts. */
+  masterInfo: Record<string, MasterInfo>;
+  /** Hypothetical unit-cost overrides (simulation). Take precedence over currentCost. */
   overrides?: Record<string, number>;
 }
 
@@ -62,33 +74,40 @@ function round2(n: number): number {
 }
 
 /**
- * Compute total cost + margin for a product against a template snapshot.
+ * Compute total cost + margin for a product against a recipe snapshot, resolving
+ * every line live from `masterInfo`.
  *
- * Unit-cost resolution order per line: overrides -> liveCosts -> snapshot value.
- * Pass no liveCosts/overrides to reproduce the "cost as of creation".
+ * Unit-cost resolution per line: archived/removed -> 0 (flagged); otherwise
+ * overrides -> live currentCost.
  */
 export function computeProductCost(input: ComputeInput): CostResult {
-  const { sellingPrice, snapshot, liveCosts, overrides } = input;
+  const { sellingPrice, snapshot, masterInfo, overrides } = input;
 
   const lines: CostLineResult[] = snapshot.lines.map((line) => {
-    const unitCost =
-      overrides?.[line.masterCostId] ??
-      liveCosts?.[line.masterCostId] ??
-      line.unitCostAtSnapshot;
+    const info = masterInfo[line.masterCostId];
+    const missing = !info;
+    const archived = info?.archived ?? false;
+    // Archived or removed cost items are excluded from the total (treated as 0)
+    // and surfaced for the user to replace or remove.
+    const excluded = missing || archived;
 
     // Every line carries its own quantity — raw materials (WEIGHT) by weight,
     // components/services (FIXED) by count. A missing quantity contributes nothing.
     const quantity = line.quantity ?? 0;
+    const unitCost = excluded ? 0 : overrides?.[line.masterCostId] ?? info!.currentCost;
     const lineCost = round2(unitCost * quantity);
 
     return {
       masterCostId: line.masterCostId,
-      name: line.name,
+      name: info?.name ?? "Removed item",
       lineType: line.lineType,
-      unit: line.unit,
+      unit: info?.unit ?? "",
       unitCost,
       quantity,
       lineCost,
+      archived,
+      needsAttention: excluded,
+      attentionReason: missing ? "removed" : archived ? "archived" : null,
     };
   });
 

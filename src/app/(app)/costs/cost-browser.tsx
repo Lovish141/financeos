@@ -9,9 +9,11 @@ import {
   archiveMasterCost,
   restoreMasterCost,
   searchMasterCosts,
+  getMasterCostImpact,
   type MasterCostListItem,
 } from "@/server/actions/cost-actions";
 import { CostRowOpen, CostEditButton, NewCostButton, onCostsChanged } from "./cost-drawer";
+import { CostImpact } from "./cost-impact";
 import { CostHistoryCell } from "./cost-history-cell";
 import type { CostType } from "@prisma/client";
 
@@ -216,13 +218,11 @@ export function CostBrowser({
                       heading={archived ? `Restore ${item.name}?` : `Archive ${item.name}?`}
                       body={
                         archived
-                          ? "It will reappear in lists and pickers."
-                          : `It will be hidden from lists and pickers.${
-                              item.usedInComponents > 0
-                                ? ` Used in ${item.usedInComponents} template${item.usedInComponents > 1 ? "s" : ""}.`
-                                : ""
-                            }`
+                          ? "It will reappear in lists and pickers, and its cost will count again wherever it's referenced."
+                          : "It will be hidden from lists and pickers, and its cost will drop out live wherever it's referenced."
                       }
+                      detail={archived ? undefined : () => getMasterCostImpact(item.id).then((impact) => <CostImpact impact={impact} />)}
+                      wide={!archived}
                       confirmLabel={archived ? "Restore" : "Archive"}
                       tone="neutral"
                       icon={archived ? "restore" : "archive"}

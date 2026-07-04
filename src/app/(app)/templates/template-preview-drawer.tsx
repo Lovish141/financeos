@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Pencil, Copy, Trash2, Scale, Boxes, Loader2 } from "lucide-react";
+import { Pencil, Copy, Trash2, Scale, Boxes, Loader2, AlertTriangle } from "lucide-react";
 import { Drawer, DrawerBody, DrawerCloseButton, DrawerSkeleton } from "@/components/drawer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
@@ -34,11 +34,17 @@ export function TemplatePreviewDrawer({
     if (!open || !templateId) return;
     let active = true;
     setData(null);
-    getTemplateDetail(templateId).then((res) => {
-      if (active) setData(res.ok ? (res as TemplateDetail) : null);
+    // Defer past the router transition: a server action invoked *during* a
+    // client-side navigation (e.g. a deep link clicked from another page) is
+    // dropped by Next and its promise never settles. rAF fires it after commit.
+    const raf = requestAnimationFrame(() => {
+      getTemplateDetail(templateId).then((res) => {
+        if (active) setData(res.ok ? (res as TemplateDetail) : null);
+      });
     });
     return () => {
       active = false;
+      cancelAnimationFrame(raf);
     };
   }, [open, templateId]);
 
@@ -139,15 +145,27 @@ export function TemplatePreviewDrawer({
                         {isWeight ? <Scale className="h-4 w-4" /> : <Boxes className="h-4 w-4" />}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ink-900">{l.name}</div>
-                        <div className="mt-0.5 font-mono text-[10.5px] text-ink-400">
-                          {isWeight
-                            ? `${formatCurrency(l.currentCost, data.currency)}/${l.unit} · per ${data.weightUnit}`
-                            : `${l.quantity} × ${formatCurrency(l.currentCost, data.currency)}`}
+                        <div className={`truncate text-[13.5px] font-semibold tracking-[-0.01em] ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`}>
+                          {l.name}
                         </div>
+                        {l.needsAttention ? (
+                          <div
+                            className="mt-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[10px] font-medium"
+                            style={{ background: "oklch(0.96 0.04 75)", color: "oklch(0.45 0.1 65)" }}
+                          >
+                            <AlertTriangle className="h-3 w-3" strokeWidth={2} />
+                            Needs attention — cost archived
+                          </div>
+                        ) : (
+                          <div className="mt-0.5 font-mono text-[10.5px] text-ink-400">
+                            {isWeight
+                              ? `${formatCurrency(l.currentCost, data.currency)}/${l.unit} · per ${data.weightUnit}`
+                              : `${l.quantity} × ${formatCurrency(l.currentCost, data.currency)}`}
+                          </div>
+                        )}
                       </div>
-                      <div className="w-[70px] text-right font-mono text-[13px] font-semibold text-ink-900">
-                        {isWeight ? `${formatCurrency(l.currentCost, data.currency)}/${data.weightUnit}` : formatCurrency(l.lineCost, data.currency)}
+                      <div className={`w-[70px] text-right font-mono text-[13px] font-semibold ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`}>
+                        {l.needsAttention ? formatCurrency(0, data.currency) : isWeight ? `${formatCurrency(l.currentCost, data.currency)}/${data.weightUnit}` : formatCurrency(l.lineCost, data.currency)}
                       </div>
                     </div>
                   );

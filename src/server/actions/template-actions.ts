@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { buildSnapshot } from "@/server/costing-service";
+import { buildSnapshot, computeProductsLive } from "@/server/costing-service";
 import type { Prisma } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
@@ -39,19 +39,25 @@ export async function searchTemplates(input: { q?: string }): Promise<TemplateLi
     include: {
       components: {
         orderBy: { sortOrder: "asc" },
-        include: { masterCost: { select: { name: true, currentCost: true } } },
+        include: { masterCost: { select: { name: true, currentCost: true, archived: true } } },
       },
-      products: { select: { grossMarginPct: true } },
+      products: { select: { id: true, sellingPrice: true, comps: true, templateVersion: true, template: { select: { name: true, category: true } } } },
     },
   });
 
+  // One batched compute-on-read across every template's products (no cached
+  // margin columns — Live Reference Architecture).
+  const allProducts = templates.flatMap((t) => t.products);
+  const costs = await computeProductsLive(db, allProducts);
+
   return templates.map((t) => {
+    // Archived cost items contribute 0 (Live Reference Architecture).
     const fixedCost = t.components
-      .filter((c) => c.lineType === "FIXED")
+      .filter((c) => c.lineType === "FIXED" && !c.masterCost.archived)
       .reduce((sum, c) => sum + (c.quantity ?? 0) * c.masterCost.currentCost, 0);
     const productCount = t.products.length;
     const avgMargin = productCount
-      ? t.products.reduce((sum, p) => sum + p.grossMarginPct, 0) / productCount
+      ? t.products.reduce((sum, p) => sum + (costs.get(p.id)?.grossMarginPct ?? 0), 0) / productCount
       : null;
     return {
       id: t.id,
@@ -117,6 +123,8 @@ export interface TemplateDetail {
     lineType: "WEIGHT" | "FIXED";
     quantity: number | null;
     lineCost: number;
+    archived: boolean;
+    needsAttention: boolean;
   }[];
   fixedTotal: number;
   weightRate: number;
@@ -130,7 +138,7 @@ export async function getTemplateDetail(id: string): Promise<TemplateDetail | { 
     include: {
       components: {
         orderBy: { sortOrder: "asc" },
-        include: { masterCost: { select: { name: true, type: true, unit: true, currentCost: true } } },
+        include: { masterCost: { select: { name: true, type: true, unit: true, currentCost: true, archived: true } } },
       },
       versions: { orderBy: { version: "desc" }, select: { version: true, createdAt: true } },
       _count: { select: { products: true } },
@@ -143,16 +151,23 @@ export async function getTemplateDetail(id: string): Promise<TemplateDetail | { 
     select: { baseCurrency: true, weightUnit: true },
   });
 
-  const lines = t.components.map((c) => ({
-    masterCostId: c.masterCostId,
-    name: c.masterCost.name,
-    type: c.masterCost.type,
-    unit: c.masterCost.unit,
-    currentCost: c.masterCost.currentCost,
-    lineType: c.lineType,
-    quantity: c.quantity,
-    lineCost: c.lineType === "FIXED" ? (c.quantity ?? 0) * c.masterCost.currentCost : c.masterCost.currentCost,
-  }));
+  const lines = t.components.map((c) => {
+    const archived = c.masterCost.archived;
+    // Archived items resolve to 0 and are flagged for the user to fix.
+    const effectiveCost = archived ? 0 : c.masterCost.currentCost;
+    return {
+      masterCostId: c.masterCostId,
+      name: c.masterCost.name,
+      type: c.masterCost.type,
+      unit: c.masterCost.unit,
+      currentCost: effectiveCost,
+      lineType: c.lineType,
+      quantity: c.quantity,
+      lineCost: c.lineType === "FIXED" ? (c.quantity ?? 0) * effectiveCost : effectiveCost,
+      archived,
+      needsAttention: archived,
+    };
+  });
   const fixedTotal = lines.filter((l) => l.lineType === "FIXED").reduce((s, l) => s + l.lineCost, 0);
   const weightRate = lines.filter((l) => l.lineType === "WEIGHT").reduce((s, l) => s + l.currentCost, 0);
 

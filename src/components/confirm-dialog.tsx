@@ -24,6 +24,8 @@ export function ConfirmDialog({
   action,
   heading,
   body,
+  detail,
+  wide = false,
   confirmLabel = "Delete",
   tone = "danger",
   icon = "delete",
@@ -35,7 +37,15 @@ export function ConfirmDialog({
 }: {
   action: () => void | Promise<void>;
   heading: string;
-  body: string;
+  body: ReactNode;
+  /**
+   * Optional extra content loaded lazily when the dialog opens (e.g. the list of
+   * templates/products a cost is used in). Fetched fresh on each open so the
+   * impact reflects current data. Rendered below `body`.
+   */
+  detail?: () => Promise<ReactNode>;
+  /** Roomier card — use when `detail` renders a list that needs the width. */
+  wide?: boolean;
   confirmLabel?: string;
   tone?: Tone;
   icon?: keyof typeof ICONS;
@@ -50,9 +60,31 @@ export function ConfirmDialog({
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [pending, start] = useTransition();
+  const [detailNode, setDetailNode] = useState<ReactNode>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const Icon = ICONS[icon];
 
   useEffect(() => setMounted(true), []);
+
+  // Lazy-load `detail` each time the dialog opens; clear it on close so the next
+  // open refetches rather than showing stale impact.
+  useEffect(() => {
+    if (!open || !detail) return;
+    let cancelled = false;
+    setDetailLoading(true);
+    detail()
+      .then((node) => {
+        if (!cancelled) setDetailNode(node);
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      setDetailNode(null);
+      setDetailLoading(false);
+    };
+  }, [open, detail]);
 
   // Close on Escape while open (unless an action is in flight).
   useEffect(() => {
@@ -97,19 +129,32 @@ export function ConfirmDialog({
             <div
               role="dialog"
               aria-modal="true"
-              className="animate-pop w-full max-w-[400px] rounded-[18px] bg-white p-[26px]"
+              className={`animate-pop flex max-h-[85vh] w-full ${wide ? "max-w-[460px]" : "max-w-[400px]"} flex-col rounded-[18px] bg-white p-[26px]`}
               style={{ boxShadow: "0 24px 70px oklch(0.2 0.02 260 / 0.28)" }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div
-                className="mb-4 flex h-12 w-12 items-center justify-center rounded-[13px]"
-                style={{ background: iconTint, color: iconColor }}
-              >
-                <Icon className="h-6 w-6" strokeWidth={2} />
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <div
+                  className="mb-4 flex h-12 w-12 items-center justify-center rounded-[13px]"
+                  style={{ background: iconTint, color: iconColor }}
+                >
+                  <Icon className="h-6 w-6" strokeWidth={2} />
+                </div>
+                <h3 className="mb-2 text-[18px] font-extrabold tracking-[-0.02em] text-ink-900">{heading}</h3>
+                <div className="text-[13.5px] leading-[1.55] text-ink-500">{body}</div>
+                {detail && (
+                  <div className="mt-4">
+                    {detailLoading ? (
+                      <div className="flex items-center gap-2 text-[12.5px] text-ink-400">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading impact…
+                      </div>
+                    ) : (
+                      detailNode
+                    )}
+                  </div>
+                )}
               </div>
-              <h3 className="mb-2 text-[18px] font-extrabold tracking-[-0.02em] text-ink-900">{heading}</h3>
-              <p className="text-[13.5px] leading-[1.55] text-ink-500">{body}</p>
-              <div className="mt-[22px] flex gap-2.5">
+              <div className="mt-[22px] flex shrink-0 gap-2.5">
                 <button
                   type="button"
                   onClick={() => setOpen(false)}

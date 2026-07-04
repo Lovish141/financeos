@@ -1,5 +1,5 @@
 import type { PrismaClient, CostType, LineType } from "@prisma/client";
-import { computeProductCost, type TemplateSnapshot, type SnapshotLine } from "../lib/costing";
+import type { TemplateSnapshot, SnapshotLine } from "../lib/costing";
 
 // Gupta Brass Fittings Pvt. Ltd. — realistic brass sanitary fittings dataset.
 // Shared by `prisma/seed.ts` (standalone demo tenant) and the in-app
@@ -161,15 +161,13 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
       }),
     });
 
+    // Structure-only snapshot (IDs + quantities) — costs resolve live.
     const snapshotLines: SnapshotLine[] = t.lines.map((l) => {
       const mc = costByName.get(l.name)!;
       return {
         masterCostId: mc.id,
-        name: l.name,
         lineType: l.lineType,
-        unit: mc.unit,
         quantity: l.lineType === "WEIGHT" ? null : l.quantity,
-        unitCostAtSnapshot: mc.cost,
       };
     });
     const snapshot: TemplateSnapshot = { version: 1, templateName: t.name, category: t.category, lines: snapshotLines };
@@ -178,15 +176,13 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
       data: { templateId: template.id, version: 1, snapshot: snapshot as object },
     });
 
-    const liveCosts = Object.fromEntries([...costByName.values()].map((v) => [v.id, v.cost]));
     for (const p of t.products) {
       // Per-product comps: raw-material (WEIGHT) lines take this SKU's weight.
+      // No cached cost columns — cost/margin compute live from the price book.
       const comps: SnapshotLine[] = snapshotLines.map((l) => ({
         ...l,
         quantity: l.lineType === "WEIGHT" ? p.weight : l.quantity,
       }));
-      const productSnapshot: TemplateSnapshot = { ...snapshot, lines: comps };
-      const result = computeProductCost({ sellingPrice: p.price, snapshot: productSnapshot, liveCosts });
       await prisma.product.create({
         data: {
           companyId,
@@ -196,9 +192,6 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
           templateVersionId: version.id,
           comps: comps as object,
           sellingPrice: p.price,
-          totalCost: result.totalCost,
-          grossMarginAmount: result.grossMarginAmount,
-          grossMarginPct: result.grossMarginPct,
           status: "ACTIVE",
         },
       });

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { recomputeForMasterCost } from "@/server/costing-service";
+import { affectedProducts } from "@/server/costing-service";
 import { validTypeUnit, TYPE_LABELS, parseMasterCostCsv } from "@/lib/csv";
 import type { CostType, Prisma } from "@prisma/client";
 
@@ -76,7 +76,9 @@ export async function updateMasterCost(
   const priceChanged = existing.currentCost !== data.currentCost;
 
   // Price change + history row happen in one transaction — never a separate
-  // uncommitted step (Module 1 technical note / acceptance).
+  // uncommitted step (Module 1 technical note / acceptance). No recompute cascade:
+  // every field (price/name/unit/category) resolves live wherever the id is
+  // referenced (Live Reference Architecture).
   await db.$transaction(async (tx) => {
     await tx.masterCost.update({
       where: { id },
@@ -100,12 +102,41 @@ export async function updateMasterCost(
     }
   });
 
-  // A real price change cascades to every affected product (Module 5 real path).
-  if (priceChanged) await recomputeForMasterCost(db, id);
-
   revalidatePath("/costs");
+  revalidatePath("/products");
+  revalidatePath("/templates");
   revalidatePath("/dashboard");
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Impact — templates + products that reference a cost item, by name. Powers the
+// non-blocking edit warning and the archive warning (Live Reference Architecture).
+// ---------------------------------------------------------------------------
+
+export interface MasterCostImpact {
+  templates: { id: string; name: string }[];
+  products: { id: string; name: string }[];
+}
+
+export async function getMasterCostImpact(id: string): Promise<MasterCostImpact> {
+  const { db } = await requireSession();
+
+  const [templates, products] = await Promise.all([
+    db.template.findMany({
+      where: { components: { some: { masterCostId: id } } },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+    affectedProducts(db, id),
+  ]);
+
+  return {
+    templates,
+    products: products
+      .map((p) => ({ id: p.id, name: p.name }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  };
 }
 
 export interface MasterCostDetail {
@@ -163,7 +194,11 @@ export async function archiveMasterCost(id: string) {
   const { db, role } = await requireSession();
   assertCanEdit(role);
   await db.masterCost.updateMany({ where: { id }, data: { archived: true } });
+  // Archiving excludes this item's cost live everywhere it's referenced.
   revalidatePath("/costs");
+  revalidatePath("/products");
+  revalidatePath("/templates");
+  revalidatePath("/dashboard");
 }
 
 export async function restoreMasterCost(id: string) {
@@ -171,6 +206,9 @@ export async function restoreMasterCost(id: string) {
   assertCanEdit(role);
   await db.masterCost.updateMany({ where: { id }, data: { archived: false } });
   revalidatePath("/costs");
+  revalidatePath("/products");
+  revalidatePath("/templates");
+  revalidatePath("/dashboard");
 }
 
 // --- CSV bulk import (Module 1) --------------------------------------------

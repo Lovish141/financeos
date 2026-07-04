@@ -2,7 +2,7 @@
 
 import { Suspense, useActionState, useEffect, useRef, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Plus, Pencil, Loader2, Archive, RotateCcw, Upload, UploadCloud, FileText, X, Download, CheckCircle2, AlertCircle } from "lucide-react";
+import { Plus, Pencil, Loader2, Archive, RotateCcw, Upload, UploadCloud, FileText, X, Download, CheckCircle2, AlertCircle, AlertTriangle } from "lucide-react";
 import { Drawer, DrawerBody, DrawerCloseButton, DrawerFooter, DrawerHeader, DrawerSkeleton } from "@/components/drawer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SubmitButton } from "@/components/submit-button";
@@ -13,15 +13,22 @@ import {
   archiveMasterCost,
   restoreMasterCost,
   getMasterCostDetail,
+  getMasterCostImpact,
   importMasterCostsCsv,
   type MasterCostDetail,
+  type MasterCostImpact,
   type ImportResult,
 } from "@/server/actions/cost-actions";
 import { formatCurrency, formatRelativeShort } from "@/lib/utils";
+import { CostImpact } from "./cost-impact";
 
 const GREEN = "oklch(0.48 0.08 168)";
 
 export type CostInitial = { id: string; name: string; category: string | null; type: string; unit: string; currentCost: number };
+
+function impactCount(i: MasterCostImpact | null): number {
+  return i ? i.templates.length + i.products.length : 0;
+}
 
 const TYPE_DOT: Record<string, string> = {
   RAW_MATERIAL: "oklch(0.58 0.12 45)",
@@ -191,6 +198,21 @@ function CostFormDrawer({
   const [category, setCategory] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [impact, setImpact] = useState<MasterCostImpact | null>(null);
+
+  // Non-blocking impact warning: which templates/products this edit will affect
+  // live (Live Reference Architecture). Only relevant when editing.
+  useEffect(() => {
+    setImpact(null);
+    if (!open || mode !== "edit" || !initial) return;
+    let active = true;
+    getMasterCostImpact(initial.id).then((res) => {
+      if (active) setImpact(res);
+    });
+    return () => {
+      active = false;
+    };
+  }, [open, mode, initial]);
 
   useEffect(() => {
     if (!open) return;
@@ -275,6 +297,15 @@ function CostFormDrawer({
               <input className="input" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Metal, Plating…" />
             </div>
           </div>
+          {mode === "edit" && impactCount(impact) > 0 && impact && (
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2 text-[12px] font-semibold" style={{ color: "oklch(0.42 0.09 65)" }}>
+                <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={2} />
+                Changes apply live wherever this cost is used
+              </div>
+              <CostImpact impact={impact} />
+            </div>
+          )}
           <div className="rounded-[10px] px-[13px] py-[11px] font-mono text-[11px] text-ink-500" style={{ background: "oklch(0.97 0.004 250)" }}>
             Editing the price writes a history entry — the previous value is preserved for trend tracking.
           </div>
@@ -352,9 +383,11 @@ function CostPreviewDrawer({
               heading={data.archived ? `Restore ${data.name}?` : `Archive ${data.name}?`}
               body={
                 data.archived
-                  ? "It will reappear in lists and pickers."
-                  : `It will be hidden from lists and pickers.${data.usedInTemplates > 0 ? ` Used in ${data.usedInTemplates} template${data.usedInTemplates > 1 ? "s" : ""}.` : ""}`
+                  ? "It will reappear in lists and pickers, and its cost will count again wherever it's referenced."
+                  : "It will be hidden from lists and pickers, and its cost will drop out live wherever it's referenced."
               }
+              detail={data.archived ? undefined : () => getMasterCostImpact(data.id).then((i) => <CostImpact impact={i} />)}
+              wide={!data.archived}
               confirmLabel={data.archived ? "Restore" : "Archive"}
               tone="neutral"
               icon={data.archived ? "restore" : "archive"}
