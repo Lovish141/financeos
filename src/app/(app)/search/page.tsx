@@ -67,7 +67,7 @@ export default async function SearchPage({
           {templates.length > 0 && (
             <Section title="Templates" icon={<Boxes className="h-4 w-4" />}>
               {templates.map((t) => (
-                <Link key={t.id} href={`/templates/${t.id}`} className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3 last:border-0 hover:bg-ink-50/60">
+                <Link key={t.id} href={`/templates?preview=${t.id}`} className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3 last:border-0 hover:bg-ink-50/60">
                   <span className="font-medium text-ink-900">{t.name}</span>
                   {t.category && <Badge tone="brand">{t.category}</Badge>}
                 </Link>

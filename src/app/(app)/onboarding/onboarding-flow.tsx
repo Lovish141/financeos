@@ -76,7 +76,7 @@ function buildSteps(c: Counts): Step[] {
         { label: "Weight vs fixed lines", desc: "Raw materials take a per-product weight; components take a fixed count." },
         { label: "Versioned automatically", desc: "Historical product costs never drift when you edit the recipe." },
       ],
-      href: "/templates/new",
+      href: "/templates?new=1",
       cta: "Create a template",
       railTitle: "Templates",
       railDesc: "Define a reusable BOM",

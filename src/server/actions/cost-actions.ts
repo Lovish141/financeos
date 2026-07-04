@@ -6,6 +6,7 @@ import { requireSession, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { recomputeForMasterCost } from "@/server/costing-service";
 import { validTypeUnit, TYPE_LABELS, parseMasterCostCsv } from "@/lib/csv";
+import type { CostType, Prisma } from "@prisma/client";
 
 export type ActionResult = { error?: string; ok?: boolean } | undefined;
 
@@ -207,4 +208,58 @@ export async function importMasterCostsCsv(
 
   revalidatePath("/costs");
   return { imported: valid.length, errors, ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Live search — returns the filtered cost rows for the table without a full
+// page navigation (called from the client on debounced query/filter changes).
+// ---------------------------------------------------------------------------
+
+export interface MasterCostListItem {
+  id: string;
+  name: string;
+  category: string | null;
+  type: CostType;
+  unit: string;
+  currentCost: number;
+  usedInComponents: number;
+  history: { oldValue: number | null; newValue: number; createdAt: string }[];
+}
+
+export async function searchMasterCosts(input: {
+  q?: string;
+  type?: string;
+  archived?: boolean;
+}): Promise<MasterCostListItem[]> {
+  const { db } = await requireSession();
+
+  const where: Prisma.MasterCostWhereInput = { archived: input.archived ?? false };
+  if (input.q) where.name = { contains: input.q, mode: "insensitive" };
+  if (input.type && input.type !== "") where.type = input.type as CostType;
+
+  const items = await db.masterCost.findMany({
+    where,
+    orderBy: { name: "asc" },
+    include: {
+      history: { orderBy: { createdAt: "desc" }, take: 3 },
+      // Distinct templates (not raw component rows) so the "used in N templates"
+      // warning matches getMasterCostDetail.
+      usedInComponents: { select: { templateId: true }, distinct: ["templateId"] },
+    },
+  });
+
+  return items.map((item) => ({
+    id: item.id,
+    name: item.name,
+    category: item.category,
+    type: item.type,
+    unit: item.unit,
+    currentCost: item.currentCost,
+    usedInComponents: item.usedInComponents.length,
+    history: item.history.map((h) => ({
+      oldValue: h.oldValue,
+      newValue: h.newValue,
+      createdAt: h.createdAt.toISOString(),
+    })),
+  }));
 }

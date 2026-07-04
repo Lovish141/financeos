@@ -42,9 +42,15 @@ export interface ComputeInput {
   sellingPrice: number;
   snapshot: TemplateSnapshot;
   /**
-   * Live unit costs keyed by masterCostId. If a line's id is absent here we
-   * fall back to `unitCostAtSnapshot` (e.g. the master cost was archived), which
-   * keeps historical "cost as of creation" reproducible.
+   * Live unit costs keyed by masterCostId. A line whose id is absent falls back
+   * to `unitCostAtSnapshot` — either because the id no longer resolves (the
+   * master cost was deleted) or because liveCosts is omitted entirely to
+   * reproduce the "cost as of creation".
+   *
+   * Note: archiving a master cost does NOT drop it from liveCosts. An archived
+   * cost still contributes its current price, so archiving is a catalog-only
+   * soft-hide and never silently re-costs a product (cost only moves on a price
+   * edit, which writes a CostHistory row).
    */
   liveCosts?: Record<string, number>;
   /** Hypothetical overrides (simulation). Take precedence over liveCosts. */

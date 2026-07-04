@@ -55,6 +55,19 @@ export function openCostPreview(id: string) {
   listeners.forEach((l) => l({ kind: "preview", id }));
 }
 
+// Fired after a create/edit/archive/restore/import so the client-rendered table
+// can refetch without a full RSC refresh (mirrors products/product-drawers.tsx).
+const changeListeners = new Set<() => void>();
+export function notifyCostsChanged() {
+  changeListeners.forEach((l) => l());
+}
+export function onCostsChanged(cb: () => void) {
+  changeListeners.add(cb);
+  return () => {
+    changeListeners.delete(cb);
+  };
+}
+
 export function NewCostButton() {
   return (
     <button type="button" className="btn-primary" onClick={openCostCreate}>
@@ -130,7 +143,7 @@ function CostDrawersController({ editable }: { editable: boolean }) {
         mode={view?.kind === "edit" ? "edit" : "create"}
         initial={view?.kind === "edit" ? view.initial : undefined}
         onClose={() => setOpen(false)}
-        onSaved={() => router.refresh()}
+        onSaved={() => notifyCostsChanged()}
       />
       <CostPreviewDrawer
         open={!!previewOpen}
@@ -138,11 +151,11 @@ function CostDrawersController({ editable }: { editable: boolean }) {
         editable={editable}
         onClose={() => setOpen(false)}
         onEdit={(initial) => setView({ kind: "edit", initial })}
-        onChanged={() => router.refresh()}
+        onChanged={() => notifyCostsChanged()}
       />
       {/* Mounted only while open so useActionState resets between imports. */}
       {importOpen && (
-        <CostImportDrawer onClose={() => setOpen(false)} onImported={() => router.refresh()} />
+        <CostImportDrawer onClose={() => setOpen(false)} onImported={() => notifyCostsChanged()} />
       )}
     </>
   );
