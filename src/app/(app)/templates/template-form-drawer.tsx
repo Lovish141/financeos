@@ -72,12 +72,16 @@ export function TemplateFormDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mode, templateId]);
 
-  const weightLine = lines.find((l) => l.lineType === "WEIGHT");
+  const hasWeight = lines.some((l) => l.lineType === "WEIGHT");
 
   function addLine(lineType: "WEIGHT" | "FIXED") {
     const pool = lineType === "WEIGHT" ? rawMaterials : others;
     if (pool.length === 0) return;
-    setLines((prev) => [...prev, { masterCostId: pool[0].id, lineType, quantity: lineType === "FIXED" ? 1 : null }]);
+    setLines((prev) => {
+      const used = new Set(prev.map((l) => l.masterCostId));
+      const pick = pool.find((m) => !used.has(m.id)) ?? pool[0];
+      return [...prev, { masterCostId: pick.id, lineType, quantity: lineType === "FIXED" ? 1 : null }];
+    });
   }
   function updateLine(idx: number, patch: Partial<Line>) {
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
@@ -89,7 +93,9 @@ export function TemplateFormDrawer({
   const fixedTotal = lines
     .filter((l) => l.lineType === "FIXED")
     .reduce((sum, l) => sum + (costById.get(l.masterCostId)?.currentCost ?? 0) * (l.quantity ?? 0), 0);
-  const weightRate = weightLine ? costById.get(weightLine.masterCostId)?.currentCost ?? 0 : 0;
+  const weightRate = lines
+    .filter((l) => l.lineType === "WEIGHT")
+    .reduce((sum, l) => sum + (costById.get(l.masterCostId)?.currentCost ?? 0), 0);
 
   async function handleSave() {
     setError(null);
@@ -137,14 +143,14 @@ export function TemplateFormDrawer({
             <div className="flex items-center justify-between pt-1">
               <div>
                 <label className="label mb-0">Recipe lines</label>
-                <p className="mt-0.5 text-[11.5px] text-ink-400">One raw material by weight + any fixed components &amp; services.</p>
+                <p className="mt-0.5 text-[11.5px] text-ink-400">Raw materials by weight + any fixed components &amp; services.</p>
               </div>
               <div className="flex gap-1.5">
                 <button
                   type="button"
                   className="btn-ghost btn-sm"
                   onClick={() => addLine("WEIGHT")}
-                  disabled={!!weightLine || rawMaterials.length === 0}
+                  disabled={rawMaterials.length === 0}
                 >
                   <Scale className="h-3.5 w-3.5" /> Weight
                 </button>
@@ -224,12 +230,12 @@ export function TemplateFormDrawer({
                 </div>
                 <div className="font-mono text-[12px]" style={{ color: "oklch(0.82 0.02 175)" }}>
                   fixed {formatCurrency(fixedTotal, currency)}
-                  {weightLine && ` · + ${formatCurrency(weightRate, currency)} × weight`}
+                  {hasWeight && ` · + ${formatCurrency(weightRate, currency)} × weight`}
                 </div>
               </div>
               <div className="text-right font-mono text-[22px] font-extrabold leading-none tracking-[-0.03em]" style={{ color: "oklch(0.85 0.08 168)" }}>
                 {formatCurrency(fixedTotal, currency)}
-                {weightLine && <span className="text-[13px] font-medium"> +</span>}
+                {hasWeight && <span className="text-[13px] font-medium"> +</span>}
               </div>
             </div>
 

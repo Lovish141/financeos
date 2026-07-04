@@ -154,7 +154,7 @@ export async function getTemplateDetail(id: string): Promise<TemplateDetail | { 
     lineCost: c.lineType === "FIXED" ? (c.quantity ?? 0) * c.masterCost.currentCost : c.masterCost.currentCost,
   }));
   const fixedTotal = lines.filter((l) => l.lineType === "FIXED").reduce((s, l) => s + l.lineCost, 0);
-  const weightLine = lines.find((l) => l.lineType === "WEIGHT");
+  const weightRate = lines.filter((l) => l.lineType === "WEIGHT").reduce((s, l) => s + l.currentCost, 0);
 
   return {
     ok: true,
@@ -166,7 +166,7 @@ export async function getTemplateDetail(id: string): Promise<TemplateDetail | { 
     productCount: t._count.products,
     lines,
     fixedTotal,
-    weightRate: weightLine?.currentCost ?? 0,
+    weightRate,
     versions: t.versions.map((v) => ({ version: v.version, at: v.createdAt.toISOString() })),
   };
 }
@@ -208,9 +208,6 @@ export async function saveTemplateForm(input: {
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? "Invalid template" };
   const { id, name, category, lines } = parsed.data;
 
-  if (lines.filter((l) => l.lineType === "WEIGHT").length > 1) {
-    return { error: "A template can have at most one weight-based (raw material) line." };
-  }
   for (const l of lines) {
     if (l.lineType === "FIXED" && (l.quantity == null || l.quantity <= 0)) {
       return { error: "Fixed lines need a quantity greater than 0." };
