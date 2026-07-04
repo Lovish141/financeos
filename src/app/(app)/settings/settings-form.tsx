@@ -43,6 +43,7 @@ export function SettingsForm({
     weightUnit: string;
     marginRedThreshold: number;
     marginYellowThreshold: number;
+    marginGoalPct: number;
     stalenessDays: number;
   };
 }) {
@@ -85,6 +86,13 @@ export function SettingsForm({
         <SettingRow title="Watch threshold" desc="Products below this margin % are flagged yellow." htmlFor="marginYellowThreshold">
           <div className="relative">
             <input className="input pr-8" id="marginYellowThreshold" name="marginYellowThreshold" type="number" step="0.1" defaultValue={initial.marginYellowThreshold} />
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[12px] text-ink-400">%</span>
+          </div>
+        </SettingRow>
+
+        <SettingRow title="Target margin goal" desc="The benchmark the dashboard compares your portfolio average against." htmlFor="marginGoalPct">
+          <div className="relative">
+            <input className="input pr-8" id="marginGoalPct" name="marginGoalPct" type="number" step="0.1" defaultValue={initial.marginGoalPct} />
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[12px] text-ink-400">%</span>
           </div>
         </SettingRow>

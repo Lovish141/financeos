@@ -12,6 +12,7 @@ const schema = z.object({
   weightUnit: z.string().min(1),
   marginRedThreshold: z.coerce.number().min(0).max(100),
   marginYellowThreshold: z.coerce.number().min(0).max(100),
+  marginGoalPct: z.coerce.number().min(0).max(100),
   stalenessDays: z.coerce.number().int().min(1).max(3650),
 });
 
@@ -38,6 +39,7 @@ export async function updateCompanySettings(
       weightUnit: data.weightUnit,
       marginRedThreshold: data.marginRedThreshold,
       marginYellowThreshold: data.marginYellowThreshold,
+      marginGoalPct: data.marginGoalPct,
       stalenessDays: data.stalenessDays,
     },
   });

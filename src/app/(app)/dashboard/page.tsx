@@ -9,10 +9,6 @@ import { formatMoney, formatPercent, formatDate } from "@/lib/utils";
 import { CategoryChart } from "./category-chart";
 import { ExportButton } from "./export-button";
 
-// The design's Settings screen exposes a "Target margin goal"; it is not yet a
-// persisted Company field, so we reference the design's default here.
-const MARGIN_GOAL_PCT = 55;
-
 const MUTED = "oklch(0.55 0.01 260)";
 
 export default async function DashboardPage() {
@@ -20,7 +16,7 @@ export default async function DashboardPage() {
 
   const company = await prisma.company.findUnique({
     where: { id: companyId },
-    select: { baseCurrency: true, marginRedThreshold: true, marginYellowThreshold: true },
+    select: { baseCurrency: true, marginRedThreshold: true, marginYellowThreshold: true, marginGoalPct: true },
   });
   const currency = company?.baseCurrency ?? "INR";
   const thresholds = {
@@ -28,7 +24,7 @@ export default async function DashboardPage() {
     marginYellowThreshold: company?.marginYellowThreshold ?? 30,
   };
   const thr = Math.round(thresholds.marginRedThreshold); // margin-at-risk threshold
-  const goal = MARGIN_GOAL_PCT;
+  const goal = company?.marginGoalPct ?? 55;
 
   const [productRows, masterCount, templateCount] = await Promise.all([
     db.product.findMany({

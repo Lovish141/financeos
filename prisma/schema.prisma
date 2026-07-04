@@ -38,6 +38,10 @@ model Company {
   marginRedThreshold    Float @default(15) // below this => red
   marginYellowThreshold Float @default(30) // below this => yellow, else green
 
+  // Target gross-margin goal, % — the benchmark the dashboard compares the
+  // portfolio average against ("… vs goal"). Company configurable.
+  marginGoalPct Float @default(55)
+
   // Staleness flag for price book (Module 1), in days.
   stalenessDays Int @default(30)
 

@@ -38,6 +38,7 @@ export default async function SettingsPage() {
             weightUnit: company.weightUnit,
             marginRedThreshold: company.marginRedThreshold,
             marginYellowThreshold: company.marginYellowThreshold,
+            marginGoalPct: company.marginGoalPct,
             stalenessDays: company.stalenessDays,
           }}
         />

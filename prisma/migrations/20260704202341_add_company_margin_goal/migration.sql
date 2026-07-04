@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Company" ADD COLUMN     "marginGoalPct" DOUBLE PRECISION NOT NULL DEFAULT 55;
