@@ -4,8 +4,6 @@ import { useActionState, useMemo, useState, useTransition } from "react";
 import {
   FlaskConical,
   ArrowRight,
-  AlertTriangle,
-  TrendingDown,
   Search,
   RotateCcw,
   Check,
@@ -277,26 +275,6 @@ export function Simulator({
 
         {result?.ok && (
           <div className="animate-fade-up space-y-5">
-            <div className="grid gap-4 sm:grid-cols-3">
-              <KpiCard
-                label="Affected products"
-                value={String(result.affectedCount)}
-                sub={`across ${result.inputs!.length} input${result.inputs!.length === 1 ? "" : "s"}`}
-              />
-              <KpiCard
-                label="Would go negative"
-                value={String(result.goingNegative)}
-                valueColor={result.goingNegative ? RISK : GREEN}
-                icon={<AlertTriangle className="h-[15px] w-[15px]" />}
-              />
-              <KpiCard
-                label="Inputs simulated"
-                value={String(result.inputs!.length)}
-                sub={result.inputs!.map((i) => i.name).join(", ")}
-                icon={<TrendingDown className="h-[15px] w-[15px]" />}
-              />
-            </div>
-
             {/* Simulated inputs — before → after per changed price. */}
             <div className="card p-[18px]">
               <div className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-500">Simulated inputs</div>
@@ -399,33 +377,6 @@ export function Simulator({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function KpiCard({
-  label,
-  value,
-  sub,
-  icon,
-  valueColor,
-}: {
-  label: string;
-  value: string;
-  sub?: React.ReactNode;
-  icon?: React.ReactNode;
-  valueColor?: string;
-}) {
-  return (
-    <div className="card p-5">
-      <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-500">
-        {icon && <span className="text-ink-400">{icon}</span>}
-        {label}
-      </div>
-      <div className="mt-2.5 text-[1.65rem] font-extrabold tracking-[-0.03em]" style={{ color: valueColor ?? "oklch(0.22 0.01 260)" }}>
-        {value}
-      </div>
-      {sub && <div className="mt-1 truncate font-mono text-[11px] text-ink-400">{sub}</div>}
     </div>
   );
 }
