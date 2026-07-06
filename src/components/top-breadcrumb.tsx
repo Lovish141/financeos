@@ -10,7 +10,6 @@ const LABELS: { prefix: string; label: string }[] = [
   { prefix: "/costs", label: "Master Costs" },
   { prefix: "/simulate", label: "What-If Simulation" },
   { prefix: "/settings", label: "Settings" },
-  { prefix: "/onboarding", label: "Getting started" },
   { prefix: "/search", label: "Search" },
 ];
 

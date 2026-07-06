@@ -18,5 +18,7 @@ export async function loadDemoData() {
   revalidatePath("/costs");
   revalidatePath("/templates");
   revalidatePath("/products");
-  redirect(`/dashboard?flash=${encodeURIComponent("Demo data loaded")}`);
+  // Return to the wizard so the price-book / recipe / product steps now render
+  // the freshly-seeded data (the review half of the onboarding flow).
+  redirect("/onboarding");
 }
