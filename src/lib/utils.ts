@@ -5,24 +5,39 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// Above this magnitude a money value has too many digits to fit its cell, so we
+// fall back to scientific notation (e.g. ₹1.2E19) rather than overflow the card.
+const MONEY_SCI_THRESHOLD = 1e12;
+// Percentages are unbounded (a near-zero price yields astronomically negative
+// margins); switch to scientific well before the digit count breaks layout.
+const PERCENT_SCI_THRESHOLD = 1e9;
+
 export function formatCurrency(value: number, currency = "INR"): string {
+  if (!Number.isFinite(value)) return "—";
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency,
     maximumFractionDigits: 2,
+    ...(Math.abs(value) >= MONEY_SCI_THRESHOLD ? { notation: "scientific", maximumFractionDigits: 1 } : {}),
   }).format(value);
 }
 
 /** Whole-rupee money for dashboards (design shows no decimals, e.g. ₹1,850). */
 export function formatMoney(value: number, currency = "INR"): string {
+  if (!Number.isFinite(value)) return "—";
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency,
     maximumFractionDigits: 0,
+    ...(Math.abs(value) >= MONEY_SCI_THRESHOLD ? { notation: "scientific", maximumFractionDigits: 1 } : {}),
   }).format(value);
 }
 
 export function formatPercent(value: number, digits = 1): string {
+  if (!Number.isFinite(value)) return "—";
+  if (Math.abs(value) >= PERCENT_SCI_THRESHOLD) {
+    return `${new Intl.NumberFormat("en-US", { notation: "scientific", maximumFractionDigits: 1 }).format(value)}%`;
+  }
   return `${value.toFixed(digits)}%`;
 }
 

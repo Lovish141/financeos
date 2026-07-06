@@ -165,7 +165,7 @@ export function TemplatePreviewDrawer({
                           </div>
                         )}
                       </div>
-                      <div className={`w-[70px] text-right font-mono text-[13px] font-semibold ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`}>
+                      <div className={`min-w-[70px] shrink-0 whitespace-nowrap text-right font-mono text-[13px] font-semibold ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`}>
                         {l.needsAttention ? formatCurrency(0, data.currency) : isWeight ? `${formatCurrency(l.currentCost, data.currency)}/${data.weightUnit}` : formatCurrency(l.lineCost, data.currency)}
                       </div>
                     </div>

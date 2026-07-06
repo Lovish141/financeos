@@ -4,7 +4,7 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, Card, Badge, EmptyState } from "@/components/ui";
 import { computeProductsLive } from "@/server/costing-service";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatPercent } from "@/lib/utils";
 
 export default async function SearchPage({
   searchParams,
@@ -89,7 +89,7 @@ export default async function SearchPage({
                     <span className="font-medium text-ink-900">{p.name}</span>
                     <span className="ml-2 text-xs text-ink-400">{p.sku}</span>
                   </span>
-                  <span className="shrink-0 text-sm text-ink-500">{(productCosts.get(p.id)?.grossMarginPct ?? 0).toFixed(1)}% margin</span>
+                  <span className="shrink-0 text-sm text-ink-500">{formatPercent(productCosts.get(p.id)?.grossMarginPct ?? 0)} margin</span>
                 </Link>
               ))}
             </Section>

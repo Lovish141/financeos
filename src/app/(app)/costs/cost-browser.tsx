@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Search, Archive, RotateCcw, Loader2 } from "lucide-react";
 import { EmptyState } from "@/components/ui";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { formatMoney, formatRelativeShort } from "@/lib/utils";
+import { formatMoney, formatPercent, formatRelativeShort } from "@/lib/utils";
 import {
   archiveMasterCost,
   restoreMasterCost,
@@ -199,7 +199,7 @@ export function CostBrowser({
                 <div className="text-right font-mono text-[12.5px] font-medium" style={{ color: changeColor }}>
                   {sign}
                   {formatMoney(Math.abs(change), currency)}
-                  <span className="text-[10.5px] opacity-80"> {change === 0 ? "0.0%" : `${Math.abs(changePct).toFixed(1)}%`}</span>
+                  <span className="text-[10.5px] opacity-80"> {change === 0 ? "0.0%" : formatPercent(Math.abs(changePct))}</span>
                 </div>
                 {historyPoints.length > 0 ? (
                   <CostHistoryCell id={item.id} currency={currency} dot={TYPE_DOT[item.type]} points={historyPoints} />

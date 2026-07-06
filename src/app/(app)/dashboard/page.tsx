@@ -96,7 +96,10 @@ export default async function DashboardPage() {
     .sort((a, b) => b.margin - a.margin);
 
   const goalDelta = avgMargin - goal;
-  const goalDeltaStr = `${goalDelta >= 0 ? "+" : "−"}${Math.abs(goalDelta).toFixed(1)}`;
+  const goalDeltaStr =
+    Math.abs(goalDelta) >= 1e9
+      ? new Intl.NumberFormat("en-US", { notation: "scientific", maximumFractionDigits: 1, signDisplay: "always" }).format(goalDelta)
+      : `${goalDelta >= 0 ? "+" : "−"}${Math.abs(goalDelta).toFixed(1)}`;
   const goalDeltaColor = goalDelta >= 0 ? "oklch(0.48 0.08 168)" : "oklch(0.58 0.1 55)";
 
   const riskAccent = atRisk.length ? "oklch(0.55 0.14 40)" : "oklch(0.5 0.09 168)";
@@ -112,15 +115,15 @@ export default async function DashboardPage() {
       <div className="mb-3.5 grid gap-3.5" style={{ gridTemplateColumns: "1.5fr 1fr 1fr 1fr" }}>
         {/* Average margin */}
         <div className="card" style={{ padding: "18px 20px" }}>
-          <div className="mb-3 flex items-center justify-between">
-            <span className="font-mono text-[10.5px] tracking-[0.1em]" style={{ color: MUTED }}>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <span className="shrink-0 font-mono text-[10.5px] tracking-[0.1em]" style={{ color: MUTED }}>
               AVERAGE MARGIN
             </span>
-            <span className="font-mono text-[11px] font-medium" style={{ color: goalDeltaColor }}>
+            <span className="min-w-0 truncate text-right font-mono text-[11px] font-medium" style={{ color: goalDeltaColor }} title={`${goalDeltaStr} vs goal`}>
               {goalDeltaStr} vs goal
             </span>
           </div>
-          <div className="text-[38px] font-extrabold leading-none" style={{ letterSpacing: "-0.03em" }}>
+          <div className="truncate text-[38px] font-extrabold leading-none" style={{ letterSpacing: "-0.03em" }} title={formatPercent(avgMargin)}>
             {formatPercent(avgMargin)}
           </div>
           <div
@@ -130,14 +133,14 @@ export default async function DashboardPage() {
             <div
               className="absolute inset-0"
               style={{
-                width: `${Math.max(0, avgMargin).toFixed(1)}%`,
+                width: `${Math.min(100, Math.max(0, avgMargin)).toFixed(1)}%`,
                 background: "linear-gradient(90deg, oklch(0.55 0.09 168), oklch(0.48 0.08 172))",
                 borderRadius: 5,
               }}
             />
             <div
               className="absolute"
-              style={{ top: -3, bottom: -3, left: `${goal}%`, width: 2, background: "oklch(0.3 0.01 260)", borderRadius: 2 }}
+              style={{ top: -3, bottom: -3, left: `${Math.min(100, Math.max(0, goal))}%`, width: 2, background: "oklch(0.3 0.01 260)", borderRadius: 2 }}
             />
           </div>
           <div className="flex justify-between font-mono text-[10.5px]" style={{ color: MUTED }}>
@@ -242,18 +245,18 @@ export default async function DashboardPage() {
                         {r.template?.category || r.template?.name || "Custom"} · {formatMoney(r.grossMarginAmount, currency)}/unit
                       </div>
                     </div>
-                    <div className="font-mono text-[15px] font-semibold" style={{ color: "oklch(0.55 0.13 40)" }}>
+                    <div className="max-w-[55%] shrink-0 truncate text-right font-mono text-[15px] font-semibold" style={{ color: "oklch(0.55 0.13 40)" }} title={formatPercent(r.grossMarginPct)}>
                       {formatPercent(r.grossMarginPct)}
                     </div>
                   </Link>
                 ))}
               </div>
               <div
-                className="mt-3.5 flex justify-between border-t pt-[13px] font-mono text-[10.5px]"
+                className="mt-3.5 flex justify-between gap-2 border-t pt-[13px] font-mono text-[10.5px]"
                 style={{ borderColor: "oklch(0.94 0.003 250)", color: MUTED }}
               >
-                <span>SAFE RANGE</span>
-                <span className="font-semibold" style={{ color: "oklch(0.34 0.01 260)" }}>
+                <span className="shrink-0">SAFE RANGE</span>
+                <span className="min-w-0 truncate text-right font-semibold" style={{ color: "oklch(0.34 0.01 260)" }} title={`${formatPercent(safeLow)} – ${formatPercent(safeHigh)}`}>
                   {formatPercent(safeLow)} – {formatPercent(safeHigh)}
                 </span>
               </div>
@@ -366,12 +369,13 @@ function PerformerCard({
       </Link>
       <div className="mb-[13px] flex items-baseline gap-3">
         <span
-          className="font-mono text-[13px] font-semibold"
+          className="shrink-0 whitespace-nowrap font-mono text-[13px] font-semibold"
           style={{ color: pillColor, background: pillBg, padding: "4px 10px", borderRadius: 7 }}
+          title={`${formatPercent(pct)} margin`}
         >
           {formatPercent(pct)} margin
         </span>
-        <span className="font-mono text-[14px]" style={{ color: "oklch(0.35 0.01 260)" }}>
+        <span className="min-w-0 truncate font-mono text-[14px]" style={{ color: "oklch(0.35 0.01 260)" }} title={amount}>
           {amount}
           <span style={{ color: "oklch(0.58 0.01 260)", fontSize: 11 }}> / unit</span>
         </span>

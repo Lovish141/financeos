@@ -7,7 +7,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { deleteProduct, getProductBreakdown, type ProductBreakdown } from "@/server/actions/product-actions";
 import { notifyProductsChanged } from "./product-drawers";
 import { HEALTH_COLOR, HEALTH_TINT } from "@/lib/costing";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatPercent } from "@/lib/utils";
 import { categoryColor } from "@/lib/utils";
 
 export function ProductPreviewDrawer({
@@ -105,7 +105,7 @@ export function ProductPreviewDrawer({
               <StatTile label="Selling price" value={formatCurrency(data.sellingPrice, data.currency)} />
               <StatTile
                 label="Margin"
-                value={`${data.grossMarginPct.toFixed(1)}%`}
+                value={formatPercent(data.grossMarginPct)}
                 valueColor={HEALTH_COLOR[data.health]}
                 bg={HEALTH_TINT[data.health]}
               />
@@ -129,13 +129,13 @@ export function ProductPreviewDrawer({
                       <div className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400" title={l.detail}>{l.detail}</div>
                     )}
                   </div>
-                  <div className="h-[5px] w-[70px] overflow-hidden rounded" style={{ background: "oklch(0.95 0.003 250)" }}>
+                  <div className="h-[5px] w-[70px] shrink-0 overflow-hidden rounded" style={{ background: "oklch(0.95 0.003 250)" }}>
                     <div
                       className="h-full rounded"
                       style={{ width: `${Math.min(100, l.sharePct)}%`, background: i === 0 ? "oklch(0.5 0.08 172)" : "oklch(0.72 0.02 260)" }}
                     />
                   </div>
-                  <div className={`w-[66px] text-right font-mono text-[13px] font-semibold ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`}>
+                  <div className={`min-w-[66px] shrink-0 whitespace-nowrap text-right font-mono text-[13px] font-semibold ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`} title={formatCurrency(l.lineCost, data.currency)}>
                     {formatCurrency(l.lineCost, data.currency)}
                   </div>
                 </div>
@@ -150,7 +150,7 @@ export function ProductPreviewDrawer({
               <span className="text-[13.5px] font-semibold">Gross margin / unit</span>
               <div className="flex items-baseline gap-2.5">
                 <span className="font-mono text-[12px]" style={{ color: "oklch(0.75 0.02 260)" }}>
-                  {data.grossMarginPct.toFixed(1)}%
+                  {formatPercent(data.grossMarginPct)}
                 </span>
                 <span className="font-mono text-[19px] font-bold" style={{ color: "oklch(0.85 0.06 168)" }}>
                   {formatCurrency(data.grossMarginAmount, data.currency)}
@@ -178,9 +178,9 @@ export function NeedsAttention({ archived }: { archived: boolean }) {
 
 function StatTile({ label, value, valueColor, bg }: { label: string; value: string; valueColor?: string; bg?: string }) {
   return (
-    <div className="rounded-xl px-[14px] py-[13px]" style={{ background: bg ?? "oklch(0.97 0.004 250)" }}>
+    <div className="min-w-0 rounded-xl px-[14px] py-[13px]" style={{ background: bg ?? "oklch(0.97 0.004 250)" }}>
       <div className="mb-1.5 font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-500">{label}</div>
-      <div className="font-mono text-[17px] font-semibold" style={valueColor ? { color: valueColor } : undefined}>
+      <div className="truncate font-mono text-[17px] font-semibold" style={valueColor ? { color: valueColor } : undefined} title={value}>
         {value}
       </div>
     </div>

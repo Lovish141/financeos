@@ -2,6 +2,8 @@
 // a dashed margin-at-risk threshold line, and per-category bars coloured by health.
 // No interactivity, so this stays a server component (bars animate via CSS).
 
+import { formatPercent } from "@/lib/utils";
+
 type Row = { category: string; margin: number; count: number; color: string };
 
 const CATMAX = 65;
@@ -82,15 +84,15 @@ export function CategoryChart({
             {/* bars */}
             <div className="absolute inset-0 flex items-end" style={{ gap: 34, padding: "0 20px 28px" }}>
               {data.map((c) => (
-                <div key={c.category} className="flex h-full flex-1 flex-col items-center justify-end">
-                  <div className="mb-[7px] font-mono text-[13px] font-semibold" style={{ color: c.color }}>
-                    {c.margin.toFixed(1)}%
+                <div key={c.category} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end">
+                  <div className="mb-[7px] max-w-full truncate font-mono text-[13px] font-semibold" style={{ color: c.color }} title={formatPercent(c.margin)}>
+                    {formatPercent(c.margin)}
                   </div>
                   <div
                     className="animate-bar-rise w-full origin-bottom"
                     style={{
                       maxWidth: 110,
-                      height: `${Math.max(0, (c.margin / CATMAX) * 100).toFixed(1)}%`,
+                      height: `${Math.min(100, Math.max(0, (c.margin / CATMAX) * 100)).toFixed(1)}%`,
                       background: `linear-gradient(180deg, ${c.color}, ${c.color.replace(")", " / 0.72)")})`,
                       borderRadius: "7px 7px 0 0",
                     }}

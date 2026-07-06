@@ -11,7 +11,7 @@ import {
   type ProductDraft,
 } from "@/server/actions/product-actions";
 import { qtyStepForUnit } from "@/lib/costing";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatPercent } from "@/lib/utils";
 
 const TYPE_DOT: Record<string, string> = {
   RAW_MATERIAL: "oklch(0.58 0.12 45)",
@@ -253,7 +253,7 @@ export function ProductFormDrawer({
                         <div className="font-mono text-[10px] text-ink-400">{TYPE_LABEL[m.type] ?? "Component"}</div>
                       )}
                     </div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex shrink-0 items-center gap-1.5">
                       <input
                         type="number"
                         min="0"
@@ -264,7 +264,7 @@ export function ProductFormDrawer({
                       />
                       <span className="min-w-[22px] font-mono text-[11px] text-ink-500">{m.unit}</span>
                     </div>
-                    <span className="w-[60px] text-right font-mono text-[13px] font-semibold text-ink-900">
+                    <span className="min-w-[60px] shrink-0 whitespace-nowrap text-right font-mono text-[13px] font-semibold text-ink-900" title={formatCurrency(lineTotal, currency)}>
                       {formatCurrency(lineTotal, currency)}
                     </span>
                     <button
@@ -310,8 +310,8 @@ export function ProductFormDrawer({
                   cost {formatCurrency(totalCost, currency)} · {formatCurrency(marginRs, currency)}/unit
                 </div>
               </div>
-              <div className="text-right text-[28px] font-extrabold leading-none tracking-[-0.03em]" style={{ color: "oklch(0.85 0.08 168)" }}>
-                {marginPct.toFixed(1)}%
+              <div className="min-w-0 truncate text-right text-[28px] font-extrabold leading-none tracking-[-0.03em]" style={{ color: "oklch(0.85 0.08 168)" }} title={formatPercent(marginPct)}>
+                {formatPercent(marginPct)}
               </div>
             </div>
 

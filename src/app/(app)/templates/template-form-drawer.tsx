@@ -198,7 +198,7 @@ export function TemplateFormDrawer({
                         </div>
                       ) : (
                         <select
-                          className="input flex-1 text-[13px]"
+                          className="input min-w-0 flex-1 text-[13px]"
                           value={line.masterCostId}
                           onChange={(e) => updateLine(idx, { masterCostId: e.target.value })}
                         >
@@ -225,7 +225,7 @@ export function TemplateFormDrawer({
                             <span className="w-[36px] font-mono text-[11px] text-ink-500">{mc?.unit}</span>
                           </div>
                         ))}
-                      <span className={`w-[64px] shrink-0 text-right font-mono text-[13px] font-semibold ${archived ? "text-ink-400" : "text-ink-900"}`}>
+                      <span className={`min-w-[64px] shrink-0 whitespace-nowrap text-right font-mono text-[13px] font-semibold ${archived ? "text-ink-400" : "text-ink-900"}`}>
                         {archived
                           ? formatCurrency(0, currency)
                           : isWeight
