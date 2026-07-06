@@ -32,9 +32,9 @@ export function onTemplatesChanged(cb: () => void) {
   };
 }
 
-export function TemplateRowOpen({ id, className, children }: { id: string; className?: string; children: ReactNode }) {
+export function TemplateRowOpen({ id, className, title, children }: { id: string; className?: string; title?: string; children: ReactNode }) {
   return (
-    <button type="button" className={className} onClick={() => openTemplatePreview(id)}>
+    <button type="button" title={title} className={className} onClick={() => openTemplatePreview(id)}>
       {children}
     </button>
   );

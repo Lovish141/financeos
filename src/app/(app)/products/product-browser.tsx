@@ -146,17 +146,17 @@ export function ProductBrowser({
                 className="grid items-center gap-3 border-b border-[var(--border)] px-[22px] py-[15px] transition-colors last:border-0 hover:bg-ink-50/60"
                 style={{ gridTemplateColumns: GRID }}
               >
-                <ProductRowOpen id={p.id} className="flex min-w-0 items-center gap-3 text-left">
+                <ProductRowOpen id={p.id} title={p.name} className="flex min-w-0 items-center gap-3 text-left">
                   <span className="shrink-0" style={{ width: 9, height: 9, borderRadius: 3, background: color }} />
                   <span className="min-w-0">
                     <span className="block truncate text-[14px] font-bold tracking-[-0.01em] text-ink-900">{p.name}</span>
-                    <span className="mt-0.5 block font-mono text-[10.5px] text-ink-400">
+                    <span className="mt-0.5 block truncate font-mono text-[10.5px] text-ink-400" title={p.sku}>
                       {p.sku}
                       {p.status !== "ACTIVE" && ` · ${p.status.toLowerCase()}`}
                     </span>
                   </span>
                 </ProductRowOpen>
-                <div className="truncate text-[12.5px] font-medium text-ink-600">{p.templateName ?? "Custom"}</div>
+                <div className="truncate text-[12.5px] font-medium text-ink-600" title={p.templateName ?? "Custom"}>{p.templateName ?? "Custom"}</div>
                 <div className="text-right font-mono text-[13px] text-ink-600">{formatMoney(p.totalCost, currency)}</div>
                 <div className="text-right font-mono text-[13px] font-semibold text-ink-800">{formatMoney(p.sellingPrice, currency)}</div>
                 <div className="flex flex-col items-end gap-[5px]">

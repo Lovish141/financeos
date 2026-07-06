@@ -143,8 +143,8 @@ export function Simulator({
                   >
                     {on && <Check className="h-[11px] w-[11px] text-ink-900" strokeWidth={3} />}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-white">{m.name}</span>
-                  <span className="shrink-0 font-mono text-[10.5px]" style={{ color: "oklch(0.62 0.02 260)" }}>
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-white" title={m.name}>{m.name}</span>
+                  <span className="shrink-0 font-mono text-[10.5px]" style={{ color: "oklch(0.62 0.02 260)" }} title={m.unit}>
                     {formatMoney(m.currentCost, currency)}/{m.unit}
                   </span>
                 </button>
@@ -185,7 +185,7 @@ export function Simulator({
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1.5">
                       {modified && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: up ? RISK : GREEN }} />}
-                      <span className="truncate text-[12.5px] font-semibold text-white">{mc.name}</span>
+                      <span className="truncate text-[12.5px] font-semibold text-white" title={mc.name}>{mc.name}</span>
                     </div>
                     <span className="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[10.5px] font-semibold" style={{ color: deltaColor, background: "oklch(1 0 0 / 0.08)" }}>
                       {!modified ? "±0%" : `${up ? "+" : "−"}${Math.abs(deltaPct).toFixed(1)}%`}
@@ -289,7 +289,7 @@ export function Simulator({
                       key={i.masterCostId}
                       className="flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-white px-2.5 py-1 font-mono text-[11.5px]"
                     >
-                      <span className="font-semibold text-ink-900">{i.name}</span>
+                      <span className="max-w-[160px] truncate font-semibold text-ink-900" title={i.name}>{i.name}</span>
                       <span className="text-ink-400">{formatMoney(i.currentPrice, currency)}</span>
                       <ArrowRight className="h-3 w-3 text-ink-300" />
                       <span className="font-semibold" style={{ color: c }}>{formatMoney(i.newPrice, currency)}</span>
@@ -329,8 +329,8 @@ export function Simulator({
                       style={{ gridTemplateColumns: "1.8fr 1.1fr 1.1fr 1.3fr 0.9fr", background: im.afterMarginAmount < 0 ? "oklch(0.97 0.02 40)" : undefined }}
                     >
                       <div className="min-w-0">
-                        <div className="truncate text-[13.5px] font-semibold text-ink-900">{im.name}</div>
-                        <div className="font-mono text-[10.5px] text-ink-400">
+                        <div className="truncate text-[13.5px] font-semibold text-ink-900" title={im.name}>{im.name}</div>
+                        <div className="truncate font-mono text-[10.5px] text-ink-400" title={im.sku}>
                           {im.sku}
                           {im.goesNegative && <span className="ml-1 font-semibold" style={{ color: RISK }}>· turns negative</span>}
                         </div>

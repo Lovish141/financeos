@@ -103,14 +103,16 @@ export function TemplateBrowser({
                   <div className="min-w-0">
                     <TemplateRowOpen
                       id={t.id}
+                      title={t.name}
                       className="block truncate text-left text-[18px] font-bold tracking-[-0.02em] text-ink-900 hover:text-brand-700"
                     >
                       {t.name}
                     </TemplateRowOpen>
                     {t.category && (
                       <span
-                        className="mt-1.5 inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[10px] tracking-[0.06em]"
+                        className="mt-1.5 inline-block max-w-full truncate rounded-full px-2.5 py-1 font-mono text-[10px] tracking-[0.06em]"
                         style={{ color: cat.color, background: cat.bg }}
+                        title={t.category}
                       >
                         {t.category}
                       </span>
@@ -146,8 +148,9 @@ export function TemplateBrowser({
                       {shown.map((nm, i) => (
                         <span
                           key={i}
-                          className="rounded-[7px] border px-[9px] py-1 text-[11.5px] font-medium"
+                          className="max-w-[180px] truncate rounded-[7px] border px-[9px] py-1 text-[11.5px] font-medium"
                           style={{ background: "oklch(0.965 0.004 250)", borderColor: "oklch(0.93 0.004 250)", color: "oklch(0.4 0.01 260)" }}
+                          title={nm}
                         >
                           {nm}
                         </span>

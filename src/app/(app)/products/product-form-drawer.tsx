@@ -191,7 +191,7 @@ export function ProductFormDrawer({
                 <label className="label">Template</label>
                 <select className="input" value={templateId} onChange={(e) => onTemplateChange(e.target.value)}>
                   {templates.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
+                    <option key={t.id} value={t.id} title={t.name}>{t.name}</option>
                   ))}
                   <option value="">Empty Template (start from scratch)</option>
                 </select>
@@ -240,7 +240,7 @@ export function ProductFormDrawer({
                   <div key={r.masterCostId} className="flex items-center gap-2.5 border-b border-[oklch(0.96_0.003_250)] px-3.5 py-2.5 last:border-0">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: m.archived ? "oklch(0.7 0.1 65)" : TYPE_DOT[m.type] ?? TYPE_DOT.COMPONENT }} />
                     <div className="min-w-0 flex-1">
-                      <div className={`truncate text-[13px] font-semibold ${m.archived ? "text-ink-400" : "text-ink-900"}`}>{m.name}</div>
+                      <div className={`truncate text-[13px] font-semibold ${m.archived ? "text-ink-400" : "text-ink-900"}`} title={m.name}>{m.name}</div>
                       {m.archived ? (
                         <div
                           className="mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-medium"
@@ -287,7 +287,7 @@ export function ProductFormDrawer({
                 >
                   <option value="">+ Add component…</option>
                   {addable.map((m) => (
-                    <option key={m.id} value={m.id}>
+                    <option key={m.id} value={m.id} title={m.name}>
                       {m.name} — {formatCurrency(m.currentCost, currency)}/{m.unit}
                     </option>
                   ))}

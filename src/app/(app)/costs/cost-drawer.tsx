@@ -89,9 +89,9 @@ export function ImportCostButton() {
     </button>
   );
 }
-export function CostRowOpen({ id, className, children }: { id: string; className?: string; children: ReactNode }) {
+export function CostRowOpen({ id, className, title, children }: { id: string; className?: string; title?: string; children: ReactNode }) {
   return (
-    <button type="button" className={className} onClick={() => openCostPreview(id)}>
+    <button type="button" title={title} className={className} onClick={() => openCostPreview(id)}>
       {children}
     </button>
   );
@@ -369,7 +369,7 @@ function CostPreviewDrawer({
                 {TYPE_LABEL[data.type]} · {data.unit}
               </div>
             )}
-            <h2 className="truncate text-[22px] font-extrabold tracking-[-0.02em] text-ink-900">{data?.name ?? "Loading…"}</h2>
+            <h2 className="truncate text-[22px] font-extrabold tracking-[-0.02em] text-ink-900" title={data?.name}>{data?.name ?? "Loading…"}</h2>
           </div>
           <DrawerCloseButton onClose={onClose} />
         </div>
@@ -588,7 +588,7 @@ function CostImportDrawer({ onClose, onImported }: { onClose: () => void; onImpo
                     <FileText className="h-5 w-5" strokeWidth={1.9} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13.5px] font-semibold text-ink-900">{file.name}</div>
+                    <div className="truncate text-[13.5px] font-semibold text-ink-900" title={file.name}>{file.name}</div>
                     <div className="mt-0.5 font-mono text-[11px] text-ink-500">
                       {formatBytes(file.size)} · ready to import
                     </div>

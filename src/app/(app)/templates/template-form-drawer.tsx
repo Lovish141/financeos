@@ -187,7 +187,7 @@ export function TemplateFormDrawer({
                       </span>
                       {archived ? (
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[13px] font-semibold text-ink-400">{mc?.name ?? "Archived item"}</div>
+                          <div className="truncate text-[13px] font-semibold text-ink-400" title={mc?.name ?? "Archived item"}>{mc?.name ?? "Archived item"}</div>
                           <div
                             className="mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-medium"
                             style={{ background: "oklch(0.96 0.04 75)", color: "oklch(0.45 0.1 65)" }}
@@ -203,7 +203,7 @@ export function TemplateFormDrawer({
                           onChange={(e) => updateLine(idx, { masterCostId: e.target.value })}
                         >
                           {pool.map((m) => (
-                            <option key={m.id} value={m.id}>
+                            <option key={m.id} value={m.id} title={m.name}>
                               {m.name} — {formatCurrency(m.currentCost, currency)}/{m.unit}
                             </option>
                           ))}

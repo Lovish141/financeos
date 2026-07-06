@@ -34,9 +34,9 @@ export function onProductsChanged(cb: () => void) {
 }
 
 /** Clickable row cell that opens the product preview drawer. */
-export function ProductRowOpen({ id, className, children }: { id: string; className?: string; children: ReactNode }) {
+export function ProductRowOpen({ id, className, title, children }: { id: string; className?: string; title?: string; children: ReactNode }) {
   return (
-    <button type="button" className={className} onClick={() => openProductPreview(id)}>
+    <button type="button" title={title} className={className} onClick={() => openProductPreview(id)}>
       {children}
     </button>
   );

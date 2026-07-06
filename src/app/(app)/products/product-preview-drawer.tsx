@@ -57,16 +57,17 @@ export function ProductPreviewDrawer({
           <div className="min-w-0">
             {data && (
               <span
-                className="mb-2.5 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[10px] tracking-[0.06em]"
+                className="mb-2.5 inline-block max-w-full truncate rounded-full px-2.5 py-1 font-mono text-[10px] tracking-[0.06em]"
                 style={{ color: cat.color, background: cat.bg }}
+                title={`${data.category ?? "Custom"} · ${data.templateName}`}
               >
                 {(data.category ?? "Custom")} · {data.templateName}
               </span>
             )}
-            <h2 className="truncate text-[22px] font-extrabold tracking-[-0.02em] text-ink-900">
+            <h2 className="truncate text-[22px] font-extrabold tracking-[-0.02em] text-ink-900" title={data?.name}>
               {data?.name ?? (loading ? "Loading…" : "Product")}
             </h2>
-            {data && <div className="mt-1 font-mono text-[11px] text-ink-400">{data.sku}</div>}
+            {data && <div className="mt-1 truncate font-mono text-[11px] text-ink-400" title={data.sku}>{data.sku}</div>}
           </div>
           <DrawerCloseButton onClose={onClose} />
         </div>
@@ -119,13 +120,13 @@ export function ProductPreviewDrawer({
               {data.lines.map((l, i) => (
                 <div key={l.masterCostId} className="flex items-center gap-3 border-b border-[oklch(0.96_0.003_250)] py-[11px] last:border-0">
                   <div className="min-w-0 flex-1">
-                    <div className={`truncate text-[13.5px] font-semibold tracking-[-0.01em] ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`}>
+                    <div className={`truncate text-[13.5px] font-semibold tracking-[-0.01em] ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`} title={l.name}>
                       {l.name}
                     </div>
                     {l.needsAttention ? (
                       <NeedsAttention archived={l.archived} />
                     ) : (
-                      <div className="mt-0.5 font-mono text-[10.5px] text-ink-400">{l.detail}</div>
+                      <div className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400" title={l.detail}>{l.detail}</div>
                     )}
                   </div>
                   <div className="h-[5px] w-[70px] overflow-hidden rounded" style={{ background: "oklch(0.95 0.003 250)" }}>

@@ -104,10 +104,10 @@ export function CategoryChart({
               {data.map((c) => (
                 <div
                   key={c.category}
-                  className="flex-1 text-center text-[13px] font-semibold"
+                  className="min-w-0 flex-1 text-center text-[13px] font-semibold"
                   style={{ color: "oklch(0.35 0.01 260)" }}
                 >
-                  {c.category}
+                  <span className="block truncate" title={c.category}>{c.category}</span>
                   <span
                     className="mt-0.5 block font-mono text-[10px] font-normal"
                     style={{ color: "oklch(0.6 0.01 260)" }}

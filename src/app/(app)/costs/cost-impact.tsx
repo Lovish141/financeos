@@ -76,6 +76,7 @@ function ImpactGroup({
           <Link
             key={item.id}
             href={href(item)}
+            title={item.name}
             className="block truncate border-b border-[var(--border)] px-3.5 py-2 text-[13px] font-medium text-ink-800 last:border-0 hover:bg-ink-50/70"
           >
             {item.name}

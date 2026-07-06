@@ -64,9 +64,9 @@ export default async function SearchPage({
           {costs.length > 0 && (
             <Section title="Master Costs" icon={<Coins className="h-4 w-4" />}>
               {costs.map((c) => (
-                <Link key={c.id} href={`/costs/${c.id}`} className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3 last:border-0 hover:bg-ink-50/60">
-                  <span className="font-medium text-ink-900">{c.name}</span>
-                  <span className="text-sm text-ink-500">{formatCurrency(c.currentCost, currency)}/{c.unit}</span>
+                <Link key={c.id} href={`/costs/${c.id}`} className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3 last:border-0 hover:bg-ink-50/60">
+                  <span className="min-w-0 truncate font-medium text-ink-900" title={c.name}>{c.name}</span>
+                  <span className="shrink-0 text-sm text-ink-500" title={c.unit}>{formatCurrency(c.currentCost, currency)}/{c.unit}</span>
                 </Link>
               ))}
             </Section>
@@ -74,9 +74,9 @@ export default async function SearchPage({
           {templates.length > 0 && (
             <Section title="Templates" icon={<Boxes className="h-4 w-4" />}>
               {templates.map((t) => (
-                <Link key={t.id} href={`/templates?preview=${t.id}`} className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3 last:border-0 hover:bg-ink-50/60">
-                  <span className="font-medium text-ink-900">{t.name}</span>
-                  {t.category && <Badge tone="brand">{t.category}</Badge>}
+                <Link key={t.id} href={`/templates?preview=${t.id}`} className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3 last:border-0 hover:bg-ink-50/60">
+                  <span className="min-w-0 truncate font-medium text-ink-900" title={t.name}>{t.name}</span>
+                  {t.category && <span className="shrink-0"><Badge tone="brand">{t.category}</Badge></span>}
                 </Link>
               ))}
             </Section>
@@ -84,12 +84,12 @@ export default async function SearchPage({
           {products.length > 0 && (
             <Section title="Products" icon={<Package className="h-4 w-4" />}>
               {products.map((p) => (
-                <Link key={p.id} href={`/products/${p.id}`} className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3 last:border-0 hover:bg-ink-50/60">
-                  <span>
+                <Link key={p.id} href={`/products/${p.id}`} className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3 last:border-0 hover:bg-ink-50/60">
+                  <span className="min-w-0 truncate" title={`${p.name} · ${p.sku}`}>
                     <span className="font-medium text-ink-900">{p.name}</span>
                     <span className="ml-2 text-xs text-ink-400">{p.sku}</span>
                   </span>
-                  <span className="text-sm text-ink-500">{(productCosts.get(p.id)?.grossMarginPct ?? 0).toFixed(1)}% margin</span>
+                  <span className="shrink-0 text-sm text-ink-500">{(productCosts.get(p.id)?.grossMarginPct ?? 0).toFixed(1)}% margin</span>
                 </Link>
               ))}
             </Section>

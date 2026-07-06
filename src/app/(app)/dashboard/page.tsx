@@ -237,8 +237,8 @@ export default async function DashboardPage() {
                     }}
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13.5px] font-bold tracking-[-0.01em] text-ink-900">{r.name}</div>
-                      <div className="mt-0.5 font-mono text-[10.5px]" style={{ color: MUTED }}>
+                      <div className="truncate text-[13.5px] font-bold tracking-[-0.01em] text-ink-900" title={r.name}>{r.name}</div>
+                      <div className="mt-0.5 truncate font-mono text-[10.5px]" style={{ color: MUTED }} title={r.template?.category || r.template?.name || "Custom"}>
                         {r.template?.category || r.template?.name || "Custom"} · {formatMoney(r.grossMarginAmount, currency)}/unit
                       </div>
                     </div>
@@ -361,7 +361,7 @@ function PerformerCard({
           {eyebrow}
         </span>
       </div>
-      <Link href={href} className="mb-[13px] block text-[22px] font-bold tracking-[-0.02em] text-ink-900">
+      <Link href={href} className="mb-[13px] block truncate text-[22px] font-bold tracking-[-0.02em] text-ink-900" title={name}>
         {name}
       </Link>
       <div className="mb-[13px] flex items-baseline gap-3">

@@ -186,11 +186,11 @@ export function CostBrowser({
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="shrink-0" style={{ width: 8, height: 8, borderRadius: "50%", background: TYPE_DOT[item.type] }} />
-                  <div className="min-w-0">
-                    <CostRowOpen id={item.id} className="text-left text-[14px] font-semibold text-ink-900 hover:text-brand-700">
+                  <div className="flex min-w-0 items-baseline">
+                    <CostRowOpen id={item.id} title={item.name} className="min-w-0 truncate text-left text-[14px] font-semibold text-ink-900 hover:text-brand-700">
                       {item.name}
                     </CostRowOpen>
-                    <span className="ml-2 font-mono text-[10.5px] text-ink-400">{item.unit}</span>
+                    <span className="ml-2 shrink-0 font-mono text-[10.5px] text-ink-400" title={item.unit}>{item.unit}</span>
                   </div>
                 </div>
                 <div className="text-[12.5px] text-ink-600">{TYPE_LABEL[item.type]}</div>

@@ -72,13 +72,14 @@ export function TemplatePreviewDrawer({
           <div className="min-w-0">
             {data?.category && (
               <span
-                className="mb-2.5 inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[10px] tracking-[0.06em]"
+                className="mb-2.5 inline-block max-w-full truncate rounded-full px-2.5 py-1 font-mono text-[10px] tracking-[0.06em]"
                 style={{ color: cat.color, background: cat.bg }}
+                title={data.category}
               >
                 {data.category}
               </span>
             )}
-            <h2 className="truncate text-[22px] font-extrabold tracking-[-0.02em] text-ink-900">
+            <h2 className="truncate text-[22px] font-extrabold tracking-[-0.02em] text-ink-900" title={data?.name}>
               {data?.name ?? "Loading…"}
             </h2>
             {data && (
@@ -145,7 +146,7 @@ export function TemplatePreviewDrawer({
                         {isWeight ? <Scale className="h-4 w-4" /> : <Boxes className="h-4 w-4" />}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className={`truncate text-[13.5px] font-semibold tracking-[-0.01em] ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`}>
+                        <div className={`truncate text-[13.5px] font-semibold tracking-[-0.01em] ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`} title={l.name}>
                           {l.name}
                         </div>
                         {l.needsAttention ? (
@@ -157,7 +158,7 @@ export function TemplatePreviewDrawer({
                             Needs attention — cost archived
                           </div>
                         ) : (
-                          <div className="mt-0.5 font-mono text-[10.5px] text-ink-400">
+                          <div className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400">
                             {isWeight
                               ? `${formatCurrency(l.currentCost, data.currency)}/${l.unit} · per ${data.weightUnit}`
                               : `${l.quantity} × ${formatCurrency(l.currentCost, data.currency)}`}
