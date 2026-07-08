@@ -63,5 +63,14 @@ export function tenantDb(companyId: string) {
 
 export type TenantDb = ReturnType<typeof tenantDb>;
 
+// The client shape available inside an interactive `$transaction` callback — the
+// scoped client minus the methods Prisma disallows mid-transaction. A full
+// `TenantDb` is assignable to it, so helpers typed against `TenantTx` accept
+// both the top-level scoped client and a transaction client.
+export type TenantTx = Omit<
+  TenantDb,
+  "$connect" | "$disconnect" | "$on" | "$use" | "$transaction" | "$extends"
+>;
+
 // Re-export Prisma namespace for convenience in server actions.
 export { Prisma };

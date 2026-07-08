@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pencil, Trash2, AlertTriangle } from "lucide-react";
+import { Pencil, Trash2, AlertTriangle, History } from "lucide-react";
 import { Drawer, DrawerBody, DrawerCloseButton, DrawerSkeleton } from "@/components/drawer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { deleteProduct, getProductBreakdown, type ProductBreakdown } from "@/server/actions/product-actions";
-import { notifyProductsChanged } from "./product-drawers";
+import { notifyProductsChanged, openProductHistory } from "./product-drawers";
 import { HEALTH_COLOR, HEALTH_TINT } from "@/lib/costing";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { categoryColor } from "@/lib/utils";
@@ -157,6 +157,19 @@ export function ProductPreviewDrawer({
                 </span>
               </div>
             </div>
+
+            {/* Revision history — opens the full master-detail log. */}
+            <button
+              type="button"
+              onClick={() => openProductHistory(data.id)}
+              className="mt-[18px] flex w-full items-center justify-between rounded-xl border border-[var(--border)] px-4 py-3 text-left transition-colors hover:bg-ink-50/60"
+            >
+              <span className="flex items-center gap-2.5">
+                <History className="h-[15px] w-[15px] text-ink-500" strokeWidth={1.9} />
+                <span className="text-[13px] font-semibold text-ink-800">Revision history</span>
+              </span>
+              <span className="font-mono text-[11px] text-ink-400">View log →</span>
+            </button>
           </>
         )}
       </DrawerBody>

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requireSession, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { affectedProducts } from "@/server/costing-service";
+import { snapshotProducts } from "@/server/product-history";
 import { validTypeUnit, TYPE_LABELS, parseMasterCostCsv } from "@/lib/csv";
 import type { CostType, Prisma } from "@prisma/client";
 
@@ -75,10 +76,11 @@ export async function updateMasterCost(
 
   const priceChanged = existing.currentCost !== data.currentCost;
 
-  // Price change + history row happen in one transaction — never a separate
-  // uncommitted step (Module 1 technical note / acceptance). No recompute cascade:
-  // every field (price/name/unit/category) resolves live wherever the id is
-  // referenced (Live Reference Architecture).
+  // Price change + CostHistory row + the affected products' COST_REPRICED
+  // revisions all happen in one transaction — never a separate uncommitted step
+  // (Module 1 technical note / acceptance). Cost still resolves live everywhere
+  // the id is referenced (Live Reference Architecture); the fan-out only appends
+  // point-in-time audit rows, it does not cache cost onto the product.
   await db.$transaction(async (tx) => {
     await tx.masterCost.update({
       where: { id },
@@ -91,13 +93,20 @@ export async function updateMasterCost(
       },
     });
     if (priceChanged) {
-      await tx.costHistory.create({
+      const costHistory = await tx.costHistory.create({
         data: {
           masterCostId: id,
           oldValue: existing.currentCost,
           newValue: data.currentCost,
           changedById: userId,
         },
+      });
+      // Fan out: snapshot every SKU that references this cost at the new price.
+      const affected = await affectedProducts(tx, id);
+      await snapshotProducts(tx, affected, "COST_REPRICED", {
+        actorId: userId,
+        triggerMasterCostId: id,
+        costHistoryId: costHistory.id,
       });
     }
   });
@@ -191,10 +200,16 @@ export async function getMasterCostDetail(id: string): Promise<MasterCostDetail 
 }
 
 export async function archiveMasterCost(id: string) {
-  const { db, role } = await requireSession();
+  const { db, role, userId } = await requireSession();
   assertCanEdit(role);
-  await db.masterCost.updateMany({ where: { id }, data: { archived: true } });
-  // Archiving excludes this item's cost live everywhere it's referenced.
+  // Archiving excludes this item's cost live everywhere it's referenced, so it
+  // moves affected SKUs' cost — record a COST_ARCHIVED revision for each, in the
+  // same transaction as the flip (no CostHistory link: this isn't a price edit).
+  await db.$transaction(async (tx) => {
+    await tx.masterCost.updateMany({ where: { id }, data: { archived: true } });
+    const affected = await affectedProducts(tx, id);
+    await snapshotProducts(tx, affected, "COST_ARCHIVED", { actorId: userId, triggerMasterCostId: id });
+  });
   revalidatePath("/costs");
   revalidatePath("/products");
   revalidatePath("/templates");
@@ -202,9 +217,15 @@ export async function archiveMasterCost(id: string) {
 }
 
 export async function restoreMasterCost(id: string) {
-  const { db, role } = await requireSession();
+  const { db, role, userId } = await requireSession();
   assertCanEdit(role);
-  await db.masterCost.updateMany({ where: { id }, data: { archived: false } });
+  // Restoring re-includes the cost, moving affected SKUs' cost back — record a
+  // COST_RESTORED revision for each in the same transaction as the flip.
+  await db.$transaction(async (tx) => {
+    await tx.masterCost.updateMany({ where: { id }, data: { archived: false } });
+    const affected = await affectedProducts(tx, id);
+    await snapshotProducts(tx, affected, "COST_RESTORED", { actorId: userId, triggerMasterCostId: id });
+  });
   revalidatePath("/costs");
   revalidatePath("/products");
   revalidatePath("/templates");

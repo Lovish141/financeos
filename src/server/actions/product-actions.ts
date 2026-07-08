@@ -16,9 +16,10 @@ import {
   effectiveSnapshot,
   getLiveMasterInfo,
 } from "@/server/costing-service";
+import { snapshotProducts } from "@/server/product-history";
 import { toSkuToken, formatCurrency } from "@/lib/utils";
 import type { ActionResult } from "./cost-actions";
-import type { Prisma, ProductStatus } from "@prisma/client";
+import type { Prisma, ProductStatus, ProductHistoryKind } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -127,7 +128,7 @@ export async function createProduct(
   _prev: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const { db, role, companyId } = await requireSession();
+  const { db, role, userId, companyId } = await requireSession();
   assertCanEdit(role);
 
   const parsed = productPayloadSchema.safeParse(Object.fromEntries(formData));
@@ -141,17 +142,22 @@ export async function createProduct(
 
   const sku = await uniqueSku(db, data.sku?.trim() || toSkuToken(data.name));
 
-  await db.product.create({
-    data: {
-      companyId,
-      name: data.name,
-      sku,
-      templateId: built.templateId,
-      templateVersionId: built.templateVersionId,
-      comps: built.comps as object,
-      sellingPrice: data.sellingPrice,
-      status: data.status ?? "ACTIVE",
-    },
+  // Create + baseline history row (CREATED) in one transaction.
+  await db.$transaction(async (tx) => {
+    const product = await tx.product.create({
+      data: {
+        companyId,
+        name: data.name,
+        sku,
+        templateId: built.templateId,
+        templateVersionId: built.templateVersionId,
+        comps: built.comps as object,
+        sellingPrice: data.sellingPrice,
+        status: data.status ?? "ACTIVE",
+      },
+      include: { template: { select: { name: true, category: true } }, templateVersion: true },
+    });
+    await snapshotProducts(tx, [product], "CREATED", { actorId: userId });
   });
 
   revalidatePath("/products");
@@ -163,7 +169,7 @@ export async function updateProduct(
   _prev: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const { db, role } = await requireSession();
+  const { db, role, userId } = await requireSession();
   assertCanEdit(role);
 
   const id = String(formData.get("id") || "");
@@ -174,23 +180,54 @@ export async function updateProduct(
   if (!compsParsed || !compsParsed.success) return { error: "Could not read the component list." };
   const data = parsed.data;
 
-  const existing = await db.product.findFirst({ where: { id }, select: { id: true } });
+  const existing = await db.product.findFirst({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      sellingPrice: true,
+      status: true,
+      comps: true,
+      templateId: true,
+      templateVersionId: true,
+    },
+  });
   if (!existing) return { error: "Product not found." };
 
   const built = await buildComps(db, data.templateId || undefined, compsParsed.data);
   if ("error" in built) return { error: built.error };
 
-  await db.product.update({
-    where: { id },
-    data: {
-      name: data.name,
-      templateId: built.templateId,
-      templateVersionId: built.templateVersionId,
-      comps: built.comps as object,
-      sellingPrice: data.sellingPrice,
-      status: data.status,
-    },
-  });
+  const updateData = {
+    name: data.name,
+    templateId: built.templateId,
+    templateVersionId: built.templateVersionId,
+    comps: built.comps as object,
+    sellingPrice: data.sellingPrice,
+    status: data.status,
+  };
+
+  // A METADATA revision is written only when a tracked field actually moved —
+  // same guard shape as updateMasterCost's `priceChanged`. (SKU isn't editable.)
+  const changed =
+    existing.name !== data.name ||
+    existing.sellingPrice !== data.sellingPrice ||
+    (data.status !== undefined && existing.status !== data.status) ||
+    existing.templateId !== built.templateId ||
+    existing.templateVersionId !== built.templateVersionId ||
+    JSON.stringify(existing.comps ?? null) !== JSON.stringify(built.comps);
+
+  if (changed) {
+    await db.$transaction(async (tx) => {
+      const updated = await tx.product.update({
+        where: { id },
+        data: updateData,
+        include: { template: { select: { name: true, category: true } }, templateVersion: true },
+      });
+      await snapshotProducts(tx, [updated], "METADATA", { actorId: userId });
+    });
+  } else {
+    await db.product.update({ where: { id }, data: updateData });
+  }
 
   revalidatePath("/products");
   revalidatePath("/dashboard");
@@ -349,6 +386,103 @@ export async function getProductDraft(id: string): Promise<ProductDraft | { ok: 
 }
 
 // ---------------------------------------------------------------------------
+// Revision history — the append-only ProductHistory timeline for one SKU
+// (see ReferenceDocs/product-history-flow.md). Read tenant-safely through the
+// scoped Product, mirroring how CostHistory is reached through MasterCost.
+// ---------------------------------------------------------------------------
+
+export interface RevisionLine {
+  name: string;
+  unit: string;
+  quantity: number;
+  unitCost: number;
+  lineCost: number;
+  needsAttention: boolean;
+}
+
+export interface ProductRevision {
+  id: string;
+  kind: ProductHistoryKind;
+  name: string;
+  sku: string;
+  status: string;
+  totalCost: number;
+  grossMarginPct: number;
+  sellingPrice: number;
+  /** Cost change vs the chronologically previous revision; null for the first. */
+  costDelta: number | null;
+  /** COST_* rows: the master cost whose move triggered this revision. */
+  triggerName: string | null;
+  /** Resolved per-line breakdown as of this revision (self-contained). */
+  lines: RevisionLine[];
+  by: string;
+  at: string;
+}
+
+export interface ProductHistoryResult {
+  ok: true;
+  currency: string;
+  productName: string;
+  sku: string;
+  revisions: ProductRevision[];
+}
+
+export async function getProductHistory(
+  productId: string,
+): Promise<ProductHistoryResult | { ok: false; error: string }> {
+  const { db, companyId } = await requireSession();
+
+  const product = await db.product.findFirst({
+    where: { id: productId },
+    include: {
+      history: {
+        orderBy: { createdAt: "desc" },
+        include: {
+          changedBy: { select: { name: true, email: true } },
+          triggerMasterCost: { select: { name: true } },
+        },
+      },
+    },
+  });
+  if (!product) return { ok: false, error: "Product not found." };
+
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { baseCurrency: true },
+  });
+
+  const rows = product.history;
+  const revisions: ProductRevision[] = rows.map((r, i) => {
+    const older = rows[i + 1]; // rows are newest-first
+    return {
+      id: r.id,
+      kind: r.kind,
+      name: r.name,
+      sku: r.sku,
+      status: r.status,
+      totalCost: r.totalCost,
+      grossMarginPct: r.grossMarginPct,
+      sellingPrice: r.sellingPrice,
+      costDelta: older
+        ? Math.round((r.totalCost - older.totalCost) * 100) / 100
+        : null,
+      triggerName: r.triggerMasterCost?.name ?? null,
+      lines: ((r.lines as unknown as RevisionLine[]) ?? []),
+      by: r.changedBy?.name ?? r.changedBy?.email ?? "System",
+      at: r.createdAt.toISOString(),
+    };
+  });
+
+  return {
+    ok: true,
+    currency: company?.baseCurrency ?? "INR",
+    productName: product.name,
+    sku: product.sku,
+    revisions,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Live search — returns the filtered product rows for the table without a full
 // page navigation (called from the client on debounced query/status changes).
 // ---------------------------------------------------------------------------
@@ -363,6 +497,9 @@ export interface ProductListItem {
   grossMarginAmount: number;
   grossMarginPct: number;
   templateName: string | null;
+  /** Recent revision costs (oldest→newest) for the table's history sparkline. */
+  costHistory: number[];
+  revisionCount: number;
 }
 
 export async function searchProducts(input: { q?: string; status?: string }): Promise<ProductListItem[]> {
@@ -379,7 +516,13 @@ export async function searchProducts(input: { q?: string; status?: string }): Pr
 
   const rows = await db.product.findMany({
     where,
-    include: { template: { select: { name: true, category: true } }, templateVersion: true },
+    include: {
+      template: { select: { name: true, category: true } },
+      templateVersion: true,
+      // Recent revision costs for the table sparkline + a total count.
+      history: { orderBy: { createdAt: "desc" }, take: 8, select: { totalCost: true } },
+      _count: { select: { history: true } },
+    },
   });
 
   // Compute-on-read from the live price book, then sort by margin in app (no
@@ -399,6 +542,9 @@ export async function searchProducts(input: { q?: string; status?: string }): Pr
         grossMarginAmount: c.grossMarginAmount,
         grossMarginPct: c.grossMarginPct,
         templateName: p.template?.name ?? null,
+        // Stored newest-first; reverse to oldest→newest for the sparkline.
+        costHistory: p.history.map((h) => h.totalCost).reverse(),
+        revisionCount: p._count.history,
       };
     })
     .sort((a, b) => b.grossMarginPct - a.grossMarginPct);

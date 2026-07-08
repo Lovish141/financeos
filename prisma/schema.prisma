@@ -75,7 +75,8 @@ model User {
   accounts Account[]
   sessions Session[]
 
-  costChanges CostHistory[] @relation("CostChangedBy")
+  costChanges    CostHistory[]    @relation("CostChangedBy")
+  productChanges ProductHistory[] @relation("ProductChangedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -145,6 +146,8 @@ model MasterCost {
 
   history          CostHistory[]
   usedInComponents TemplateComponent[]
+  // COST_* product revisions this cost triggered (reprice / archive / restore).
+  productRevisions ProductHistory[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt // doubles as "last price update" for staleness
@@ -164,6 +167,9 @@ model CostHistory {
 
   changedById  String?
   changedBy    User?    @relation("CostChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  // COST_REPRICED product revisions caused by this exact price change.
+  productRevisions ProductHistory[]
 
   createdAt    DateTime @default(now())
 
@@ -276,9 +282,69 @@ model Product {
 
   status ProductStatus @default(ACTIVE)
 
+  history ProductHistory[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([companyId, sku])
   @@index([companyId, templateId])
+}
+
+// What triggered a ProductHistory row. Metadata events come from editing the
+// product itself; COST_* events fan out when a referenced master cost moves the
+// product's computed cost.
+enum ProductHistoryKind {
+  CREATED       // product first saved
+  METADATA      // product's own fields edited (name / status / price / recipe)
+  COST_REPRICED // a referenced master cost's price changed
+  COST_ARCHIVED // a referenced master cost was archived (line drops from total)
+  COST_RESTORED // a referenced master cost was restored (line re-enters total)
+}
+
+// Append-only revision log for a product. One row per event that changed the
+// product (create / metadata edit) or moved its computed cost (a referenced
+// master cost repriced / archived / restored, fanned out to each affected SKU).
+// Each row is a SELF-CONTAINED snapshot — the product's fields + recipe + the
+// cost resolved at that instant — so reading the timeline never needs a join.
+// The stored cost is a point-in-time record, NOT a live cache: current cost is
+// still computed on read (Live Reference Architecture). Reached through the
+// tenant-scoped Product (no own companyId), mirroring CostHistory.
+model ProductHistory {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  kind ProductHistoryKind
+
+  // Product field snapshot as of this instant.
+  name         String
+  sku          String
+  status       ProductStatus
+  sellingPrice Float
+  comps        Json? // recipe as saved (slim: [{ masterCostId, lineType, quantity }])
+
+  // Cost resolved at this instant (point-in-time record, not a live cache).
+  totalCost      Float
+  grossMarginPct Float
+  // Resolved per-line breakdown as of this instant, so the revision detail view
+  // renders faithfully without a join (component name/unit/qty/unitCost/lineCost).
+  // Shape: [{ masterCostId, name, unit, quantity, unitCost, lineCost, needsAttention }].
+  lines          Json?
+
+  // The actor who caused it (null once the user is deleted).
+  changedById String?
+  changedBy   User?   @relation("ProductChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  // COST_* rows: which master cost moved. COST_REPRICED also links the exact
+  // CostHistory row so the price-book log and the product log cross-reference.
+  triggerMasterCostId String?
+  triggerMasterCost   MasterCost?  @relation(fields: [triggerMasterCostId], references: [id], onDelete: SetNull)
+  costHistoryId       String?
+  costHistory         CostHistory? @relation(fields: [costHistoryId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([productId, createdAt])
+  @@index([triggerMasterCostId])
 }

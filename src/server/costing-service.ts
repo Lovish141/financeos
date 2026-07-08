@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import type { TenantDb } from "@/lib/tenant";
+import type { TenantTx } from "@/lib/tenant";
 import {
   computeProductCost,
   type TemplateSnapshot,
@@ -14,7 +14,7 @@ import {
  * provenance/history — costs always resolve live at read time.
  */
 export async function buildSnapshot(
-  db: TenantDb,
+  db: TenantTx,
   templateId: string,
   version: number,
 ): Promise<TemplateSnapshot> {
@@ -43,7 +43,7 @@ export async function buildSnapshot(
  * single source of truth for name/unit/cost/archived across every read path.
  */
 export async function getLiveMasterInfo(
-  db: TenantDb,
+  db: TenantTx,
   masterCostIds: string[],
 ): Promise<Record<string, MasterInfo>> {
   if (masterCostIds.length === 0) return {};
@@ -91,7 +91,7 @@ export function effectiveSnapshot(product: ProductForCost): TemplateSnapshot {
 
 /** Compute a single product's cost from the live price book (+ optional overrides). */
 export async function computeForProduct(
-  db: TenantDb,
+  db: TenantTx,
   product: ProductForCost,
   overrides?: Record<string, number>,
 ): Promise<CostResult> {
@@ -110,7 +110,7 @@ export async function computeForProduct(
  * them (avoids N+1 on the product list + dashboard). Returns a map by product id.
  */
 export async function computeProductsLive<T extends ProductForCost & { id: string }>(
-  db: TenantDb,
+  db: TenantTx,
   products: T[],
 ): Promise<Map<string, CostResult>> {
   const ids = new Set<string>();
@@ -132,7 +132,7 @@ export async function computeProductsLive<T extends ProductForCost & { id: strin
  * built on (indexed) or directly in its per-product comps (JSON, filtered in
  * memory). Used by the impact warning and the what-if simulator (Module 5).
  */
-export async function affectedProducts(db: TenantDb, masterCostId: string) {
+export async function affectedProducts(db: TenantTx, masterCostId: string) {
   const include = {
     templateVersion: true,
     template: { select: { name: true, category: true } },
@@ -165,7 +165,7 @@ export async function affectedProducts(db: TenantDb, masterCostId: string) {
  * product whose recipe references *any* of the given ids. Used by the multi-input
  * what-if simulator (Module 5): one fan-out query instead of N.
  */
-export async function affectedProductsMany(db: TenantDb, masterCostIds: string[]) {
+export async function affectedProductsMany(db: TenantTx, masterCostIds: string[]) {
   if (masterCostIds.length === 0) return [];
   const idSet = new Set(masterCostIds);
   const include = {

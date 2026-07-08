@@ -8,8 +8,9 @@ import { marginHealth, HEALTH_COLOR } from "@/lib/costing";
 import { formatMoney, formatPercent } from "@/lib/utils";
 import { deleteProduct, searchProducts, type ProductListItem } from "@/server/actions/product-actions";
 import { NewProductButton, ProductRowOpen, ProductEditButton, onProductsChanged } from "./product-drawers";
+import { ProductHistoryCell } from "./product-history-cell";
 
-const GRID = "2.1fr 1.1fr 0.9fr 0.9fr 1.2fr 74px";
+const GRID = "2fr 1fr 0.85fr 0.85fr 1.1fr 0.6fr 74px";
 
 const STATUS_TABS: { value: string; label: string }[] = [
   { value: "", label: "All" },
@@ -133,6 +134,7 @@ export function ProductBrowser({
             <span className="text-right">Cost</span>
             <span className="text-right">Price</span>
             <span className="text-right">Margin</span>
+            <span className="text-center">History</span>
             <span />
           </div>
 
@@ -168,6 +170,7 @@ export function ProductBrowser({
                     <div style={{ height: "100%", width: barW, background: color, borderRadius: 4 }} />
                   </div>
                 </div>
+                <ProductHistoryCell id={p.id} points={p.costHistory} count={p.revisionCount} />
                 <div className="flex justify-end gap-1.5">
                   {editable && <ProductEditButton id={p.id} />}
                   {editable && (

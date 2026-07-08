@@ -4,17 +4,22 @@ import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus, Pencil } from "lucide-react";
 import { ProductPreviewDrawer } from "./product-preview-drawer";
+import { ProductHistoryDrawer } from "./product-history-drawer";
 import { ProductFormDrawer, type TemplateOption, type MasterCostOption } from "./product-form-drawer";
 
 // Module-level pub/sub so server-rendered rows can open the shared drawers
 // without prop-drilling (mirrors components/toaster.tsx).
 type OpenEvent =
   | { kind: "preview"; id: string }
+  | { kind: "history"; id: string }
   | { kind: "form"; mode: "create" | "edit"; id: string | null };
 const listeners = new Set<(e: OpenEvent) => void>();
 
 export function openProductPreview(id: string) {
   listeners.forEach((l) => l({ kind: "preview", id }));
+}
+export function openProductHistory(id: string) {
+  listeners.forEach((l) => l({ kind: "history", id }));
 }
 export function openProductForm(mode: "create" | "edit", id: string | null) {
   listeners.forEach((l) => l({ kind: "form", mode, id }));
@@ -75,6 +80,8 @@ function Controller({
 
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [historyId, setHistoryId] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [form, setForm] = useState<{ mode: "create" | "edit"; id: string | null }>({ mode: "create", id: null });
   const [formOpen, setFormOpen] = useState(false);
 
@@ -83,6 +90,10 @@ function Controller({
       if (e.kind === "preview") {
         setPreviewId(e.id);
         setPreviewOpen(true);
+      } else if (e.kind === "history") {
+        setPreviewOpen(false);
+        setHistoryId(e.id);
+        setHistoryOpen(true);
       } else {
         setForm({ mode: e.mode, id: e.id });
         setFormOpen(true);
@@ -139,6 +150,7 @@ function Controller({
           setFormOpen(true);
         }}
       />
+      <ProductHistoryDrawer open={historyOpen} productId={historyId} onClose={() => setHistoryOpen(false)} />
       {editable && (
         <ProductFormDrawer
           open={formOpen}
