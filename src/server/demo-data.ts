@@ -1,4 +1,4 @@
-import type { PrismaClient, CostType, LineType } from "@prisma/client";
+import type { PrismaClient, CostType, LineType, SalesChannel } from "@prisma/client";
 import type { TemplateSnapshot, SnapshotLine } from "../lib/costing";
 
 // Gupta Brass Fittings Pvt. Ltd. — realistic brass sanitary fittings dataset.
@@ -143,6 +143,7 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
   }
 
   // 2. Templates + version snapshots + 3. Products.
+  const seededProducts: { id: string; sku: string; price: number }[] = [];
   for (const t of TEMPLATES) {
     const template = await prisma.template.create({
       data: { companyId, name: t.name, category: t.category },
@@ -183,7 +184,7 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
         ...l,
         quantity: l.lineType === "WEIGHT" ? p.weight : l.quantity,
       }));
-      await prisma.product.create({
+      const created = await prisma.product.create({
         data: {
           companyId,
           name: p.name,
@@ -195,6 +196,68 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
           status: "ACTIVE",
         },
       });
+      seededProducts.push({ id: created.id, sku: created.sku, price: p.price });
     }
+  }
+
+  // 4. Customers (Module 9) — the master accounts sales are booked against.
+  const CUSTOMER_DEFS: { name: string; channel: SalesChannel; city: string; email: string }[] = [
+    { name: "Sharma Traders", channel: "RETAIL", city: "Delhi", email: "orders@sharmatraders.in" },
+    { name: "Metro Sanitary", channel: "WHOLESALE", city: "Mumbai", email: "purchase@metrosanitary.com" },
+    { name: "Gulf Imports FZE", channel: "EXPORT", city: "Dubai", email: "buy@gulfimports.ae" },
+    { name: "BuildMart Online", channel: "ONLINE", city: "Bengaluru", email: "vendors@buildmart.in" },
+    { name: "Kohli & Sons", channel: "DISTRIBUTOR", city: "Ludhiana", email: "kohlisons@gmail.com" },
+    { name: "Prime Fittings", channel: "WHOLESALE", city: "Ahmedabad", email: "sales@primefittings.in" },
+  ];
+  const seededCustomers: { id: string; channel: SalesChannel }[] = [];
+  for (const c of CUSTOMER_DEFS) {
+    const created = await prisma.customer.create({
+      data: { companyId, name: c.name, channel: c.channel, city: c.city, email: c.email },
+    });
+    seededCustomers.push({ id: created.id, channel: c.channel });
+  }
+
+  // 5. Sales (Module 8) — a few months of realized transactions per product, at
+  // prices near (but often below) catalog so realized margin diverges from the
+  // theoretical catalog margin. Each links to a customer whose channel it uses.
+  // Deterministic pseudo-random for a stable demo.
+  let seed = 20260708;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+
+  const sales: {
+    companyId: string;
+    productId: string;
+    customerId: string;
+    quantity: number;
+    unitPrice: number;
+    soldAt: Date;
+    channel: SalesChannel;
+  }[] = [];
+  for (const p of seededProducts) {
+    const orders = 4 + Math.floor(rand() * 5); // 4–8 orders each
+    for (let i = 0; i < orders; i++) {
+      const customer = seededCustomers[Math.floor(rand() * seededCustomers.length)];
+      const channel = customer.channel;
+      // Wholesale/distributor/export skew to bigger volumes + deeper discounts.
+      const bulk = channel === "WHOLESALE" || channel === "DISTRIBUTOR" || channel === "EXPORT";
+      const quantity = bulk ? 40 + Math.floor(rand() * 260) : 5 + Math.floor(rand() * 45);
+      const discount = (bulk ? 0.06 : 0.0) + rand() * 0.12; // 0–18% off catalog
+      const unitPrice = Math.round(p.price * (1 - discount));
+      sales.push({
+        companyId,
+        productId: p.id,
+        customerId: customer.id,
+        quantity,
+        unitPrice,
+        soldAt: daysAgo(Math.floor(rand() * 120)),
+        channel,
+      });
+    }
+  }
+  if (sales.length > 0) {
+    await prisma.sale.createMany({ data: sales });
   }
 }

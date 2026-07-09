@@ -16,6 +16,7 @@ import {
   effectiveSnapshot,
   getLiveMasterInfo,
 } from "@/server/costing-service";
+import { salesByProduct } from "./sales-actions";
 import { toSkuToken, formatCurrency } from "@/lib/utils";
 import type { ActionResult } from "./cost-actions";
 import type { Prisma, ProductStatus } from "@prisma/client";
@@ -363,6 +364,10 @@ export interface ProductListItem {
   grossMarginAmount: number;
   grossMarginPct: number;
   templateName: string | null;
+  // Realized-sales rollup (Module 8) — units sold and true profit contribution
+  // (realized revenue − live cost × units). Zero when a product has no sales.
+  unitsSold: number;
+  totalProfit: number;
 }
 
 export async function searchProducts(input: { q?: string; status?: string }): Promise<ProductListItem[]> {
@@ -384,11 +389,18 @@ export async function searchProducts(input: { q?: string; status?: string }): Pr
 
   // Compute-on-read from the live price book, then sort by margin in app (no
   // cached cost columns — Live Reference Architecture).
-  const costs = await computeProductsLive(db, rows);
+  const [costs, sales] = await Promise.all([
+    computeProductsLive(db, rows),
+    salesByProduct(db),
+  ]);
 
   return rows
     .map((p) => {
       const c = costs.get(p.id)!;
+      const s = sales.get(p.id);
+      const unitsSold = s?.unitsSold ?? 0;
+      // Realized profit: actual revenue minus live cost applied to units sold.
+      const totalProfit = (s?.revenue ?? 0) - c.totalCost * unitsSold;
       return {
         id: p.id,
         name: p.name,
@@ -399,6 +411,8 @@ export async function searchProducts(input: { q?: string; status?: string }): Pr
         grossMarginAmount: c.grossMarginAmount,
         grossMarginPct: c.grossMarginPct,
         templateName: p.template?.name ?? null,
+        unitsSold,
+        totalProfit,
       };
     })
     .sort((a, b) => b.grossMarginPct - a.grossMarginPct);

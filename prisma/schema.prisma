@@ -1,89 +1,52 @@
-// FinanceOS — Prisma schema
-// Manufacturing profitability & costing platform.
-// Hierarchy: MasterCost (price book) -> Template (BOM) -> Product (SKU).
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider  = "postgresql"
-  // Neon: pooled connection string for the app runtime …
   url       = env("DATABASE_URL")
-  // … and a direct (non-pooled) connection for migrations. On Neon this is the
-  // same host with `-pooler` removed from the hostname.
   directUrl = env("DIRECT_URL")
 }
 
-// ---------------------------------------------------------------------------
-// Module 7 — Multi-tenancy, Auth & Permissions
-// ---------------------------------------------------------------------------
-
-enum Role {
-  ADMIN
-  COST_MANAGER
-  VIEWER
-}
-
 model Company {
-  id       String @id @default(cuid())
-  name     String
-  isDemo   Boolean @default(false)
-
-  // Org settings (Module 7)
-  baseCurrency String @default("INR")
-  weightUnit   String @default("kg")
-
-  // Margin health thresholds, % (Module 3 / 4) — company configurable.
-  marginRedThreshold    Float @default(15) // below this => red
-  marginYellowThreshold Float @default(30) // below this => yellow, else green
-
-  // Target gross-margin goal, % — the benchmark the dashboard compares the
-  // portfolio average against ("… vs goal"). Company configurable.
-  marginGoalPct Float @default(55)
-
-  // Staleness flag for price book (Module 1), in days.
-  stalenessDays Int @default(30)
-
-  // Persisted what-if simulation setup (Module 5) — the master-cost items the
-  // user last chose to include in the simulator, so it reopens with their preset.
-  // Shape: string[] of masterCostIds. Values are never saved (always start from
-  // each item's live base). Null => no saved preset.
-  simSettings Json?
-
-  users        User[]
-  masterCosts  MasterCost[]
-  templates    Template[]
-  products     Product[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                    String       @id @default(cuid())
+  name                  String
+  isDemo                Boolean      @default(false)
+  baseCurrency          String       @default("INR")
+  weightUnit            String       @default("kg")
+  marginRedThreshold    Float        @default(15)
+  marginYellowThreshold Float        @default(30)
+  marginGoalPct         Float        @default(55)
+  stalenessDays         Int          @default(30)
+  simSettings           Json?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  customers             Customer[]
+  masterCosts           MasterCost[]
+  products              Product[]
+  sales                 Sale[]
+  templates             Template[]
+  users                 User[]
 }
 
 model User {
-  id           String    @id @default(cuid())
-  name         String?
-  email        String    @unique
-  passwordHash String?
-  role         Role      @default(VIEWER)
+  id            String        @id @default(cuid())
+  name          String?
+  email         String        @unique
+  passwordHash  String?
+  role          Role          @default(VIEWER)
   emailVerified DateTime?
-  image        String?
-
-  companyId String
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  accounts Account[]
-  sessions Session[]
-
-  costChanges CostHistory[] @relation("CostChangedBy")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  image         String?
+  companyId     String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  accounts      Account[]
+  costChanges   CostHistory[] @relation("CostChangedBy")
+  sessions      Session[]
+  company       Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId])
 }
-
-// --- Auth.js (NextAuth v5) adapter models. Database sessions (not JWT). ---
 
 model Account {
   id                String  @id @default(cuid())
@@ -98,8 +61,7 @@ model Account {
   scope             String?
   id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
 }
@@ -120,125 +82,157 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
-// ---------------------------------------------------------------------------
-// Module 1 — Master Costs (Price Book)
-// ---------------------------------------------------------------------------
-
-enum CostType {
-  RAW_MATERIAL // priced by weight, e.g. ₹/kg
-  COMPONENT    // priced per piece
-  SERVICE      // priced per piece / per unit of work
-}
-
 model MasterCost {
-  id          String   @id @default(cuid())
-  companyId   String
-  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  name        String
-  category    String?
-  type        CostType
-  unit        String   // "kg", "piece", etc.
-  currentCost Float
-
-  archived    Boolean  @default(false)
-
+  id               String              @id @default(cuid())
+  companyId        String
+  name             String
+  category         String?
+  type             CostType
+  unit             String
+  currentCost      Float
+  archived         Boolean             @default(false)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
   history          CostHistory[]
+  company          Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
   usedInComponents TemplateComponent[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt // doubles as "last price update" for staleness
 
   @@index([companyId, type])
   @@index([companyId, archived])
 }
 
-// Append-only price history — one row per cost change (Module 1 acceptance).
 model CostHistory {
-  id           String   @id @default(cuid())
+  id           String     @id @default(cuid())
   masterCostId String
-  masterCost   MasterCost @relation(fields: [masterCostId], references: [id], onDelete: Cascade)
-
   oldValue     Float?
   newValue     Float
-
   changedById  String?
-  changedBy    User?    @relation("CostChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
-
-  createdAt    DateTime @default(now())
+  createdAt    DateTime   @default(now())
+  changedBy    User?      @relation("CostChangedBy", fields: [changedById], references: [id])
+  masterCost   MasterCost @relation(fields: [masterCostId], references: [id], onDelete: Cascade)
 
   @@index([masterCostId, createdAt])
 }
 
-// ---------------------------------------------------------------------------
-// Module 2 — Templates (BOM / Recipe Builder)
-// ---------------------------------------------------------------------------
-
 model Template {
-  id        String  @id @default(cuid())
-  companyId String
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  name     String
-  category String?
-
+  id         String              @id @default(cuid())
+  companyId  String
+  name       String
+  category   String?
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  products   Product[]
+  company    Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
   components TemplateComponent[]
   versions   TemplateVersion[]
-  products   Product[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
   @@index([companyId])
 }
 
-enum LineType {
-  WEIGHT // one raw material applied by weight; quantity supplied per-product
-  FIXED  // component/service at a fixed quantity
-}
-
-// The current, editable recipe lines for a template.
 model TemplateComponent {
-  id         String   @id @default(cuid())
-  templateId String
-  template   Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
-
+  id           String     @id @default(cuid())
+  templateId   String
   masterCostId String
-  masterCost   MasterCost @relation(fields: [masterCostId], references: [id], onDelete: Restrict)
-
-  lineType LineType
-  quantity Float?   // null/unused for WEIGHT lines (weight supplied per-product)
-
-  sortOrder Int @default(0)
+  lineType     LineType
+  quantity     Float?
+  sortOrder    Int        @default(0)
+  masterCost   MasterCost @relation(fields: [masterCostId], references: [id])
+  template     Template   @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   @@index([templateId])
-  @@index([masterCostId]) // fan-out query for simulation (Module 5)
+  @@index([masterCostId])
 }
 
-// Immutable snapshot of a template at save time. Products pin to a version so
-// historical product costs don't drift when the live template is edited.
 model TemplateVersion {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   templateId String
-  template   Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
-
-  version  Int
-  // Structure-only snapshot (Live Reference Architecture): IDs + quantities, no
-  // master-cost field copies. Kept for provenance/history; costs resolve live.
-  // { version, templateName, category, lines: [{ masterCostId, lineType, quantity }] }
-  snapshot Json
-
-  products Product[]
-
-  createdAt DateTime @default(now())
+  version    Int
+  snapshot   Json
+  createdAt  DateTime  @default(now())
+  products   Product[]
+  template   Template  @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   @@unique([templateId, version])
   @@index([templateId])
 }
 
-// ---------------------------------------------------------------------------
-// Module 3 — Products (SKUs)
-// ---------------------------------------------------------------------------
+model Product {
+  id                String           @id @default(cuid())
+  companyId         String
+  name              String
+  sku               String
+  templateId        String?
+  templateVersionId String?
+  sellingPrice      Float
+  status            ProductStatus    @default(ACTIVE)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  comps             Json?
+  company           Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  template          Template?        @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateVersion   TemplateVersion? @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  sales             Sale[]
+
+  @@unique([companyId, sku])
+  @@index([companyId, templateId])
+}
+
+model Sale {
+  id         String        @id @default(cuid())
+  companyId  String
+  productId  String
+  customerId String?
+  quantity   Float
+  unitPrice  Float
+  soldAt     DateTime
+  channel    SalesChannel?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  company    Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product    Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customer   Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, soldAt])
+  @@index([companyId, productId])
+  @@index([productId])
+  @@index([customerId])
+}
+
+model Customer {
+  id        String        @id @default(cuid())
+  companyId String
+  name      String
+  email     String?
+  phone     String?
+  channel   SalesChannel?
+  gstin     String?
+  city      String?
+  notes     String?
+  archived  Boolean       @default(false)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  company   Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  sales     Sale[]
+
+  @@index([companyId, archived])
+}
+
+enum Role {
+  ADMIN
+  COST_MANAGER
+  VIEWER
+}
+
+enum CostType {
+  RAW_MATERIAL
+  COMPONENT
+  SERVICE
+}
+
+enum LineType {
+  WEIGHT
+  FIXED
+}
 
 enum ProductStatus {
   DRAFT
@@ -246,39 +240,11 @@ enum ProductStatus {
   DISCONTINUED
 }
 
-model Product {
-  id        String  @id @default(cuid())
-  companyId String
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  name String
-  sku  String
-
-  // Optional so a product can be built from an "Empty Template" (no base recipe).
-  templateId        String?
-  template          Template?        @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  templateVersionId String?
-  templateVersion   TemplateVersion? @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
-
-  // Per-product effective component list — slim, IDs only (Live Reference
-  // Architecture): [{ masterCostId, lineType, quantity }]. This is the product's
-  // own recipe, which insulates it from template edits; every field (name/unit/
-  // cost) resolves live from MasterCost at read time. Null => inherit the pinned
-  // templateVersion snapshot (legacy products).
-  comps Json?
-
-  // Reality supplied at the SKU level (Module 3). Per-line quantities — raw
-  // materials by weight included — live on each line in `comps`.
-  sellingPrice Float
-
-  // No cached cost/margin columns — cost & margin are computed on read from the
-  // live price book everywhere they're shown (Live Reference Architecture).
-
-  status ProductStatus @default(ACTIVE)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([companyId, sku])
-  @@index([companyId, templateId])
+enum SalesChannel {
+  RETAIL
+  WHOLESALE
+  DISTRIBUTOR
+  EXPORT
+  ONLINE
+  OTHER
 }

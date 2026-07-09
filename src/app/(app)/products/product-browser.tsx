@@ -9,7 +9,7 @@ import { formatMoney, formatPercent } from "@/lib/utils";
 import { deleteProduct, searchProducts, type ProductListItem } from "@/server/actions/product-actions";
 import { NewProductButton, ProductRowOpen, ProductEditButton, onProductsChanged } from "./product-drawers";
 
-const GRID = "2.1fr 1.1fr 0.9fr 0.9fr 1.2fr 74px";
+const GRID = "1.8fr 0.9fr 0.75fr 0.75fr 1.1fr 0.7fr 0.85fr 74px";
 
 const STATUS_TABS: { value: string; label: string }[] = [
   { value: "", label: "All" },
@@ -133,6 +133,8 @@ export function ProductBrowser({
             <span className="text-right">Cost</span>
             <span className="text-right">Price</span>
             <span className="text-right">Margin</span>
+            <span className="text-right">Units sold</span>
+            <span className="text-right">Total profit</span>
             <span />
           </div>
 
@@ -167,6 +169,15 @@ export function ProductBrowser({
                   <div style={{ width: 96, height: 5, borderRadius: 4, background: "oklch(0.94 0.004 250)", overflow: "hidden" }}>
                     <div style={{ height: "100%", width: barW, background: color, borderRadius: 4 }} />
                   </div>
+                </div>
+                <div className="text-right font-mono text-[13px] text-ink-600">
+                  {p.unitsSold > 0 ? p.unitsSold.toLocaleString("en-IN") : <span className="text-ink-300">—</span>}
+                </div>
+                <div
+                  className="text-right font-mono text-[13px] font-semibold"
+                  style={{ color: p.unitsSold === 0 ? "oklch(0.72 0.01 260)" : p.totalProfit >= 0 ? "oklch(0.46 0.08 168)" : "oklch(0.55 0.14 40)" }}
+                >
+                  {p.unitsSold > 0 ? formatMoney(p.totalProfit, currency) : "—"}
                 </div>
                 <div className="flex justify-end gap-1.5">
                   {editable && <ProductEditButton id={p.id} />}

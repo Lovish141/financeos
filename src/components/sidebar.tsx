@@ -7,6 +7,8 @@ import {
   Coins,
   Boxes,
   Package,
+  ShoppingCart,
+  Users,
   FlaskConical,
   Settings,
   LogOut,
@@ -23,6 +25,8 @@ const groups = [
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutGrid },
       { href: "/products", label: "Products", icon: Package },
+      { href: "/sales", label: "Sales", icon: ShoppingCart },
+      { href: "/customers", label: "Customers", icon: Users },
       { href: "/templates", label: "Templates", icon: Boxes },
       { href: "/costs", label: "Master Costs", icon: Coins },
     ],

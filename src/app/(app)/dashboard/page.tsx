@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { EmptyState } from "@/components/ui";
 import { marginHealth, HEALTH_COLOR } from "@/lib/costing";
 import { computeProductsLive } from "@/server/costing-service";
+import { profitByProduct } from "@/server/actions/sales-actions";
 import { formatMoney, formatPercent, formatDate } from "@/lib/utils";
 import { CategoryChart } from "./category-chart";
 import { ExportButton } from "./export-button";
@@ -26,7 +27,7 @@ export default async function DashboardPage() {
   const thr = Math.round(thresholds.marginRedThreshold); // margin-at-risk threshold
   const goal = company?.marginGoalPct ?? 55;
 
-  const [productRows, masterCount, templateCount] = await Promise.all([
+  const [productRows, masterCount, templateCount, profitRows] = await Promise.all([
     db.product.findMany({
       where: { status: { not: "DISCONTINUED" } },
       select: {
@@ -37,7 +38,13 @@ export default async function DashboardPage() {
     }),
     db.masterCost.count({ where: { archived: false } }),
     db.template.count(),
+    // Realized profit contribution weighted by sales volume (Module 8).
+    profitByProduct(),
   ]);
+
+  // Top realized-profit contributor (volume × true margin). Null when no sales.
+  const topContributor = profitRows.find((p) => p.unitsSold > 0) ?? null;
+  const totalRealizedProfit = profitRows.reduce((s, p) => s + (p.unitsSold > 0 ? p.totalProfit : 0), 0);
 
   // Compute-on-read from the live price book — no cached cost columns.
   const costs = await computeProductsLive(db, productRows);
@@ -180,6 +187,40 @@ export default async function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Top realized-profit contributor (volume × true margin) */}
+      {topContributor && (
+        <div className="mb-3.5 card" style={{ padding: "20px 22px", borderTopWidth: 3, borderTopColor: "oklch(0.5 0.09 168)" }}>
+          <div className="mb-[15px] flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <TrendUpIcon />
+              <span className="font-mono text-[10.5px] tracking-[0.12em]" style={{ color: MUTED }}>
+                TOP PROFIT CONTRIBUTOR
+              </span>
+            </div>
+            <span className="font-mono text-[10.5px]" style={{ color: MUTED }}>
+              portfolio realized profit&nbsp;
+              <b style={{ color: "oklch(0.46 0.08 168)" }}>{formatMoney(totalRealizedProfit, currency)}</b>
+            </span>
+          </div>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <Link href={`/products/${topContributor.id}`} className="min-w-0">
+              <div className="truncate text-[22px] font-bold tracking-[-0.02em] text-ink-900" title={topContributor.name}>
+                {topContributor.name}
+              </div>
+              <div className="mt-1 font-mono text-[11px]" style={{ color: MUTED }}>
+                {topContributor.unitsSold.toLocaleString("en-IN")} units sold · {formatPercent(topContributor.grossMarginPct)} realized margin
+              </div>
+            </Link>
+            <div className="text-right">
+              <div className="font-mono text-[9.5px] uppercase tracking-[0.08em]" style={{ color: MUTED }}>Total profit</div>
+              <div className="font-mono text-[26px] font-extrabold tracking-[-0.02em]" style={{ color: "oklch(0.46 0.08 168)" }}>
+                {formatMoney(topContributor.totalProfit, currency)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Best / worst */}
       <div className="mb-3.5 grid grid-cols-2 gap-3.5">
