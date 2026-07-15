@@ -10,7 +10,7 @@ import { deleteProduct, searchProducts, type ProductListItem } from "@/server/ac
 import { NewProductButton, ProductRowOpen, ProductEditButton, onProductsChanged } from "./product-drawers";
 import { ProductHistoryCell } from "./product-history-cell";
 
-const GRID = "2fr 1fr 0.85fr 0.85fr 1.1fr 0.6fr 74px";
+const GRID = "1.8fr 0.9fr 0.7fr 0.7fr 1fr 0.6fr 0.7fr 0.85fr 74px";
 
 const STATUS_TABS: { value: string; label: string }[] = [
   { value: "", label: "All" },
@@ -135,6 +135,8 @@ export function ProductBrowser({
             <span className="text-right">Price</span>
             <span className="text-right">Margin</span>
             <span className="text-center">History</span>
+            <span className="text-right">Units sold</span>
+            <span className="text-right">Total profit</span>
             <span />
           </div>
 
@@ -171,6 +173,15 @@ export function ProductBrowser({
                   </div>
                 </div>
                 <ProductHistoryCell id={p.id} points={p.costHistory} count={p.revisionCount} />
+                <div className="text-right font-mono text-[13px] text-ink-600">
+                  {p.unitsSold > 0 ? p.unitsSold.toLocaleString("en-IN") : <span className="text-ink-300">—</span>}
+                </div>
+                <div
+                  className="text-right font-mono text-[13px] font-semibold"
+                  style={{ color: p.unitsSold === 0 ? "oklch(0.72 0.01 260)" : p.totalProfit >= 0 ? "oklch(0.46 0.08 168)" : "oklch(0.55 0.14 40)" }}
+                >
+                  {p.unitsSold > 0 ? formatMoney(p.totalProfit, currency) : "—"}
+                </div>
                 <div className="flex justify-end gap-1.5">
                   {editable && <ProductEditButton id={p.id} />}
                   {editable && (

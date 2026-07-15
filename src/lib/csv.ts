@@ -124,3 +124,132 @@ export function parseMasterCostCsv(text: string): CsvParseOutcome {
 
   return { valid, errors };
 }
+
+// ---------------------------------------------------------------------------
+// Sales CSV (Module 8) — bulk sale transactions. Mirrors the master-cost parser:
+// DB-free and framework-free so it's unit-testable and reusable from the action.
+// ---------------------------------------------------------------------------
+
+export const SALES_CHANNELS = ["RETAIL", "WHOLESALE", "DISTRIBUTOR", "EXPORT", "ONLINE", "OTHER"] as const;
+export type SalesChannelValue = (typeof SALES_CHANNELS)[number];
+
+const CHANNEL_ALIASES: Record<string, SalesChannelValue> = {
+  retail: "RETAIL",
+  wholesale: "WHOLESALE",
+  distributor: "DISTRIBUTOR",
+  export: "EXPORT",
+  online: "ONLINE",
+  ecommerce: "ONLINE",
+  "e-commerce": "ONLINE",
+  other: "OTHER",
+};
+
+/** Parse a channel string to an enum value, or null if empty/unrecognised-but-optional. */
+export function parseChannel(raw: string): SalesChannelValue | null | undefined {
+  const v = raw.trim().toLowerCase();
+  if (!v) return null;
+  return CHANNEL_ALIASES[v]; // undefined => invalid
+}
+
+export interface ParsedSaleRow {
+  sku: string;
+  quantity: number;
+  unitPrice: number;
+  soldAt: Date;
+  channel: SalesChannelValue | null;
+  customer: string | null;
+}
+
+export interface SalesCsvOutcome {
+  valid: ParsedSaleRow[];
+  errors: { line: number; error: string }[];
+  fatal?: string;
+}
+
+/** Parse a date cell — accepts YYYY-MM-DD, YYYY/MM/DD, or DD-MM-YYYY / DD/MM/YYYY. */
+export function parseSaleDate(raw: string): Date | null {
+  const s = raw.trim();
+  if (!s) return null;
+  // ISO-ish: 2026-07-08 or 2026/07/08
+  let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (m) {
+    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // Day-first: 08-07-2026 or 08/07/2026
+  m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (m) {
+    const d = new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Validate a sales CSV. Returns valid rows (by SKU — resolved to product ids in
+ * the action) plus per-line errors (1-based, header = line 1). Valid rows still
+ * import even when others fail (mirrors Module 1 acceptance).
+ */
+export function parseSalesCsv(text: string): SalesCsvOutcome {
+  const rows = parseCsv(text);
+  if (rows.length < 2) {
+    return { valid: [], errors: [], fatal: "File has no data rows. Expected a header row plus at least one data row." };
+  }
+
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const col = (...names: string[]) => {
+    for (const n of names) {
+      const i = header.indexOf(n);
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
+  const iSku = col("sku");
+  const iQty = col("quantity", "qty", "units");
+  const iDate = col("date", "sold_at", "soldat");
+  const iPrice = col("unit_price", "unitprice", "price");
+  const iChannel = col("channel");
+  const iCustomer = col("customer", "account");
+
+  if (iSku < 0 || iQty < 0 || iDate < 0 || iPrice < 0) {
+    return { valid: [], errors: [], fatal: "Header must include: sku, quantity, date, unit_price (channel, customer optional)." };
+  }
+
+  const valid: ParsedSaleRow[] = [];
+  const errors: { line: number; error: string }[] = [];
+
+  for (let r = 1; r < rows.length; r++) {
+    const line = r + 1;
+    const cells = rows[r];
+    const sku = (cells[iSku] ?? "").trim();
+    const qtyStr = (cells[iQty] ?? "").trim();
+    const dateStr = (cells[iDate] ?? "").trim();
+    const priceStr = (cells[iPrice] ?? "").trim();
+    const channelStr = iChannel >= 0 ? (cells[iChannel] ?? "").trim() : "";
+    const customer = iCustomer >= 0 ? (cells[iCustomer] ?? "").trim() : "";
+
+    if (!sku) { errors.push({ line, error: "Missing SKU." }); continue; }
+    const quantity = Number(qtyStr);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      errors.push({ line, error: `Invalid quantity "${qtyStr}".` });
+      continue;
+    }
+    const unitPrice = Number(priceStr);
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      errors.push({ line, error: `Invalid unit price "${priceStr}".` });
+      continue;
+    }
+    const soldAt = parseSaleDate(dateStr);
+    if (!soldAt) { errors.push({ line, error: `Invalid date "${dateStr}". Use YYYY-MM-DD.` }); continue; }
+    const channel = parseChannel(channelStr);
+    if (channel === undefined) {
+      errors.push({ line, error: `Invalid channel "${channelStr}". Use retail, wholesale, distributor, export, online, or other.` });
+      continue;
+    }
+
+    valid.push({ sku, quantity, unitPrice, soldAt, channel, customer: customer || null });
+  }
+
+  return { valid, errors };
+}

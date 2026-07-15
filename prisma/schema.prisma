@@ -55,6 +55,8 @@ model Company {
   masterCosts  MasterCost[]
   templates    Template[]
   products     Product[]
+  customers    Customer[]
+  sales        Sale[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -283,6 +285,7 @@ model Product {
   status ProductStatus @default(ACTIVE)
 
   history ProductHistory[]
+  sales   Sale[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -347,4 +350,57 @@ model ProductHistory {
 
   @@index([productId, createdAt])
   @@index([triggerMasterCostId])
+}
+
+// ---------------------------------------------------------------------------
+// Module — Sales & Customers
+// ---------------------------------------------------------------------------
+
+enum SalesChannel {
+  RETAIL
+  WHOLESALE
+  DISTRIBUTOR
+  EXPORT
+  ONLINE
+  OTHER
+}
+
+model Sale {
+  id         String        @id @default(cuid())
+  companyId  String
+  productId  String
+  customerId String?
+  quantity   Float
+  unitPrice  Float
+  soldAt     DateTime
+  channel    SalesChannel?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  company    Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product    Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customer   Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, soldAt])
+  @@index([companyId, productId])
+  @@index([productId])
+  @@index([customerId])
+}
+
+model Customer {
+  id        String        @id @default(cuid())
+  companyId String
+  name      String
+  email     String?
+  phone     String?
+  channel   SalesChannel?
+  gstin     String?
+  city      String?
+  notes     String?
+  archived  Boolean       @default(false)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  company   Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  sales     Sale[]
+
+  @@index([companyId, archived])
 }

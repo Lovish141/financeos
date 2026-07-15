@@ -17,6 +17,7 @@ import {
   getLiveMasterInfo,
 } from "@/server/costing-service";
 import { snapshotProducts } from "@/server/product-history";
+import { salesByProduct } from "./sales-actions";
 import { toSkuToken, formatCurrency } from "@/lib/utils";
 import type { ActionResult } from "./cost-actions";
 import type { Prisma, ProductStatus, ProductHistoryKind } from "@prisma/client";
@@ -500,6 +501,10 @@ export interface ProductListItem {
   /** Recent revision costs (oldest→newest) for the table's history sparkline. */
   costHistory: number[];
   revisionCount: number;
+  // Realized-sales rollup (Module 8) — units sold and true profit contribution
+  // (realized revenue − live cost × units). Zero when a product has no sales.
+  unitsSold: number;
+  totalProfit: number;
 }
 
 export async function searchProducts(input: { q?: string; status?: string }): Promise<ProductListItem[]> {
@@ -527,11 +532,18 @@ export async function searchProducts(input: { q?: string; status?: string }): Pr
 
   // Compute-on-read from the live price book, then sort by margin in app (no
   // cached cost columns — Live Reference Architecture).
-  const costs = await computeProductsLive(db, rows);
+  const [costs, sales] = await Promise.all([
+    computeProductsLive(db, rows),
+    salesByProduct(db),
+  ]);
 
   return rows
     .map((p) => {
       const c = costs.get(p.id)!;
+      const s = sales.get(p.id);
+      const unitsSold = s?.unitsSold ?? 0;
+      // Realized profit: actual revenue minus live cost applied to units sold.
+      const totalProfit = (s?.revenue ?? 0) - c.totalCost * unitsSold;
       return {
         id: p.id,
         name: p.name,
@@ -545,6 +557,8 @@ export async function searchProducts(input: { q?: string; status?: string }): Pr
         // Stored newest-first; reverse to oldest→newest for the sparkline.
         costHistory: p.history.map((h) => h.totalCost).reverse(),
         revisionCount: p._count.history,
+        unitsSold,
+        totalProfit,
       };
     })
     .sort((a, b) => b.grossMarginPct - a.grossMarginPct);
