@@ -2,16 +2,16 @@
 
 import { Suspense, useActionState, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Plus, Loader2, Upload, UploadCloud, FileText, X, Download, CheckCircle2, AlertCircle } from "lucide-react";
+import { Plus, Loader2, Upload, UploadCloud, FileText, X, Download, CheckCircle2, AlertCircle, Trash2 } from "lucide-react";
 import { Drawer, DrawerBody, DrawerFooter, DrawerHeader } from "@/components/drawer";
 import { SubmitButton } from "@/components/submit-button";
 import { toast } from "@/components/toaster";
 import {
-  createSale,
-  updateSale,
+  createOrder,
+  updateOrder,
   importSalesCsv,
   type ImportResult,
-  type SaleListItem,
+  type OrderListItem,
 } from "@/server/actions/sales-actions";
 import type { CustomerOption } from "@/server/actions/customer-actions";
 
@@ -37,7 +37,7 @@ const CHANNELS: { value: string; label: string }[] = [
 // ---- pub/sub (mirrors costs/cost-drawer.tsx) -------------------------------
 type SaleEvent =
   | { kind: "create" }
-  | { kind: "edit"; sale: SaleListItem }
+  | { kind: "edit"; sale: OrderListItem }
   | { kind: "import" };
 const listeners = new Set<(e: SaleEvent) => void>();
 export function openSaleCreate() {
@@ -46,7 +46,7 @@ export function openSaleCreate() {
 export function openSaleImport() {
   listeners.forEach((l) => l({ kind: "import" }));
 }
-export function openSaleEdit(sale: SaleListItem) {
+export function openSaleEdit(sale: OrderListItem) {
   listeners.forEach((l) => l({ kind: "edit", sale }));
 }
 
@@ -147,6 +147,13 @@ function todayISO() {
 }
 
 // ---- create / edit ---------------------------------------------------------
+// One editable product line within the sale order form.
+type LineDraft = { productId: string; quantity: string; unitPrice: string };
+
+function newLine(product?: ProductOption): LineDraft {
+  return { productId: product?.id ?? "", quantity: "", unitPrice: product ? String(product.sellingPrice) : "" };
+}
+
 function SaleFormDrawer({
   open,
   products,
@@ -160,13 +167,11 @@ function SaleFormDrawer({
   products: ProductOption[];
   customers: CustomerOption[];
   mode: "create" | "edit";
-  initial?: SaleListItem;
+  initial?: OrderListItem;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [productId, setProductId] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
+  const [lines, setLines] = useState<LineDraft[]>([]);
   const [soldAt, setSoldAt] = useState(todayISO());
   const [channel, setChannel] = useState("");
   const [customerId, setCustomerId] = useState("");
@@ -177,16 +182,12 @@ function SaleFormDrawer({
     if (!open) return;
     setError(null);
     if (mode === "edit" && initial) {
-      setProductId(initial.productId);
-      setQuantity(String(initial.quantity));
-      setUnitPrice(String(initial.unitPrice));
+      setLines(initial.items.map((it) => ({ productId: it.productId, quantity: String(it.quantity), unitPrice: String(it.unitPrice) })));
       setSoldAt(initial.soldAt.slice(0, 10));
       setChannel(initial.channel ?? "");
       setCustomerId(initial.customerId ?? "");
     } else {
-      setProductId(products[0]?.id ?? "");
-      setQuantity("");
-      setUnitPrice(products[0] ? String(products[0].sellingPrice) : "");
+      setLines([newLine(products[0])]);
       setSoldAt(todayISO());
       setChannel("");
       setCustomerId("");
@@ -203,39 +204,60 @@ function SaleFormDrawer({
     }
   }
 
-  // When picking a product in create mode, default the price to its catalog price.
-  function onProductChange(id: string) {
-    setProductId(id);
-    if (mode === "create") {
-      const p = products.find((x) => x.id === id);
-      if (p) setUnitPrice(String(p.sellingPrice));
-    }
+  function patchLine(i: number, patch: Partial<LineDraft>) {
+    setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
-  const selected = products.find((p) => p.id === productId);
-  const qtyNum = parseFloat(quantity);
-  const priceNum = parseFloat(unitPrice);
-  const revenue = qtyNum > 0 && priceNum >= 0 ? qtyNum * priceNum : null;
+  // Picking a product fills that line's price with the product's catalog price
+  // (only when the field is blank, so a user's edited price isn't clobbered).
+  function onLineProductChange(i: number, id: string) {
+    const p = products.find((x) => x.id === id);
+    setLines((ls) =>
+      ls.map((l, idx) => {
+        if (idx !== i) return l;
+        const price = l.unitPrice.trim() === "" && p ? String(p.sellingPrice) : l.unitPrice;
+        return { ...l, productId: id, unitPrice: price };
+      }),
+    );
+  }
+
+  function addLine() {
+    setLines((ls) => [...ls, newLine(products[0])]);
+  }
+  function removeLine(i: number) {
+    setLines((ls) => ls.filter((_, idx) => idx !== i));
+  }
+
+  const orderTotal = lines.reduce((sum, l) => {
+    const q = parseFloat(l.quantity);
+    const p = parseFloat(l.unitPrice);
+    return sum + (q > 0 && p >= 0 ? q * p : 0);
+  }, 0);
 
   async function handleSave() {
     setError(null);
-    if (!productId) return setError("Pick a product.");
-    if (!(qtyNum > 0)) return setError("Quantity must be greater than 0.");
-    if (!(priceNum >= 0)) return setError("Unit price must be 0 or more.");
+    if (lines.length === 0) return setError("Add at least one product to the sale.");
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (!l.productId) return setError(`Pick a product for line ${i + 1}.`);
+      if (!(parseFloat(l.quantity) > 0)) return setError(`Quantity for line ${i + 1} must be greater than 0.`);
+      if (!(parseFloat(l.unitPrice) >= 0)) return setError(`Unit price for line ${i + 1} must be 0 or more.`);
+    }
     if (!soldAt) return setError("Sale date is required.");
     if (soldAt > todayISO()) return setError("Sale date can't be in the future.");
 
     setSaving(true);
     const fd = new FormData();
     if (mode === "edit" && initial) fd.set("id", initial.id);
-    fd.set("productId", productId);
-    fd.set("quantity", quantity);
-    fd.set("unitPrice", unitPrice);
     fd.set("soldAt", soldAt);
     fd.set("channel", channel);
     fd.set("customerId", customerId);
+    fd.set(
+      "items",
+      JSON.stringify(lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice) }))),
+    );
 
-    const res = await (mode === "create" ? createSale : updateSale)(undefined, fd);
+    const res = await (mode === "create" ? createOrder : updateOrder)(undefined, fd);
     setSaving(false);
     if (res?.error) return setError(res.error);
     toast(mode === "create" ? "Sale recorded" : "Sale updated");
@@ -244,7 +266,7 @@ function SaleFormDrawer({
   }
 
   return (
-    <Drawer open={open} onClose={onClose} width={452}>
+    <Drawer open={open} onClose={onClose} width={520}>
       <DrawerHeader onClose={onClose}>
         <h3 className="text-[18px] font-extrabold tracking-[-0.02em] text-ink-900">
           {mode === "create" ? "New sale" : "Edit sale"}
@@ -253,27 +275,6 @@ function SaleFormDrawer({
 
       <DrawerBody>
         <div className="space-y-4">
-          <div>
-            <label className="label">Product</label>
-            <select className="input" value={productId} onChange={(e) => onProductChange(e.target.value)} autoFocus>
-              {products.length === 0 && <option value="">No products yet</option>}
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} · {p.sku}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">Quantity</label>
-              <input className="input" type="number" step="any" min="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label className="label">Realized unit price (₹)</label>
-              <input className="input" type="number" step="0.01" min="0" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} placeholder="0" />
-            </div>
-          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Sale date</label>
@@ -301,19 +302,48 @@ function SaleFormDrawer({
             )}
           </div>
 
-          {selected && priceNum >= 0 && priceNum !== selected.sellingPrice && (
-            <div className="rounded-[10px] px-[13px] py-[11px] font-mono text-[11px] text-ink-500" style={{ background: "oklch(0.97 0.004 250)" }}>
-              Catalog price is ₹{selected.sellingPrice}. You&apos;re recording a realized price of ₹{priceNum} — true margin will differ from the catalog margin.
-            </div>
-          )}
-          {revenue != null && (
-            <div className="rounded-[10px] px-4 py-3" style={{ background: "oklch(0.955 0.025 168)" }}>
-              <span className="font-mono text-[9.5px] uppercase tracking-[0.08em]" style={{ color: GREEN }}>Sale revenue</span>
-              <div className="mt-0.5 font-mono text-[20px] font-bold tracking-[-0.02em]" style={{ color: GREEN }}>
-                ₹{revenue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+          <div>
+            <label className="label">Products</label>
+            <div className="space-y-2">
+              <div className="grid gap-2 font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-400" style={{ gridTemplateColumns: "1fr 68px 88px 30px" }}>
+                <span>Product</span>
+                <span className="text-right">Qty</span>
+                <span className="text-right">Price ₹</span>
+                <span />
               </div>
+              {lines.map((l, i) => (
+                <div key={i} className="grid items-center gap-2" style={{ gridTemplateColumns: "1fr 68px 88px 30px" }}>
+                  <select className="input" value={l.productId} onChange={(e) => onLineProductChange(i, e.target.value)}>
+                    {products.length === 0 && <option value="">No products yet</option>}
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} · {p.sku}</option>
+                    ))}
+                  </select>
+                  <input className="input px-2 text-right" type="number" step="any" min="0" value={l.quantity} onChange={(e) => patchLine(i, { quantity: e.target.value })} placeholder="0" />
+                  <input className="input px-2 text-right" type="number" step="0.01" min="0" value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: e.target.value })} placeholder="0" />
+                  <button
+                    type="button"
+                    title="Remove line"
+                    onClick={() => removeLine(i)}
+                    disabled={lines.length === 1}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-risk-500 disabled:pointer-events-none disabled:opacity-30"
+                  >
+                    <Trash2 className="h-[15px] w-[15px]" strokeWidth={1.9} />
+                  </button>
+                </div>
+              ))}
             </div>
-          )}
+            <button type="button" onClick={addLine} disabled={products.length === 0} className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-brand-600 transition-colors hover:text-brand-700 disabled:opacity-40">
+              <Plus className="h-3.5 w-3.5" /> Add product
+            </button>
+          </div>
+
+          <div className="rounded-[10px] px-4 py-3" style={{ background: "oklch(0.955 0.025 168)" }}>
+            <span className="font-mono text-[9.5px] uppercase tracking-[0.08em]" style={{ color: GREEN }}>Order total</span>
+            <div className="mt-0.5 font-mono text-[20px] font-bold tracking-[-0.02em]" style={{ color: GREEN }}>
+              ₹{orderTotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+            </div>
+          </div>
           {error && <p className="text-sm text-risk-500">{error}</p>}
         </div>
       </DrawerBody>
@@ -330,10 +360,12 @@ function SaleFormDrawer({
 }
 
 // ---- CSV import ------------------------------------------------------------
-const TEMPLATE_CSV = `sku,quantity,date,unit_price,channel,customer
-MIX-BASIN-EL,120,2026-06-01,1420,retail,Sharma Traders
-MIX-BASIN-PR,45,2026-06-03,1790,wholesale,Metro Sanitary
-MIX-BASIN-EC,200,2026-06-05,999,online,`;
+// The optional `invoice` column groups rows into one multi-product order; rows
+// without an invoice id each import as their own single-line order.
+const TEMPLATE_CSV = `invoice,sku,quantity,date,unit_price,channel,customer
+INV-1001,MIX-BASIN-EL,120,2026-06-01,1420,retail,Sharma Traders
+INV-1001,MIX-BASIN-PR,45,2026-06-01,1790,retail,Sharma Traders
+INV-1002,MIX-BASIN-EC,200,2026-06-05,999,online,`;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -351,7 +383,7 @@ function SaleImportDrawer({ onClose, onImported }: { onClose: () => void; onImpo
 
   useEffect(() => {
     if (result?.ok && result.imported > 0) {
-      toast(`Imported ${result.imported} sale${result.imported > 1 ? "s" : ""}`);
+      toast(`Imported ${result.imported} line item${result.imported > 1 ? "s" : ""}`);
       onImported();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -486,7 +518,7 @@ function SaleImportDrawer({ onClose, onImported }: { onClose: () => void; onImpo
                     {c}
                   </code>
                 ))}
-                {["channel", "customer"].map((c) => (
+                {["channel", "customer", "invoice"].map((c) => (
                   <code key={c} className="inline-flex items-center gap-1 rounded-md border border-dashed border-ink-200 bg-white px-2 py-1 font-mono text-[11px] text-ink-400">
                     {c}
                     <span className="text-[9px] uppercase tracking-[0.05em]">opt</span>
@@ -494,7 +526,7 @@ function SaleImportDrawer({ onClose, onImported }: { onClose: () => void; onImpo
                 ))}
               </div>
               <p className="mt-3 text-[12px] leading-relaxed text-ink-500">
-                Match rows to products by SKU. Invalid rows are reported by line number; valid rows still import.
+                Match rows to products by SKU. Rows sharing an <code className="font-mono text-[11px] text-ink-600">invoice</code> id become one multi-product order. Invalid rows are reported by line number; valid rows still import.
               </p>
             </div>
 
@@ -503,7 +535,8 @@ function SaleImportDrawer({ onClose, onImported }: { onClose: () => void; onImpo
                 {result.imported > 0 && (
                   <div className="flex items-center gap-2 rounded-[10px] px-4 py-3 text-[13px] font-medium" style={{ background: "oklch(0.955 0.025 168)", color: GREEN }}>
                     <CheckCircle2 className="h-4 w-4 shrink-0" />
-                    Imported {result.imported} sale{result.imported > 1 ? "s" : ""}.
+                    Imported {result.imported} line item{result.imported > 1 ? "s" : ""}
+                    {result.orders ? ` across ${result.orders} order${result.orders > 1 ? "s" : ""}` : ""}.
                   </div>
                 )}
                 {result.warnings && result.warnings.length > 0 && (

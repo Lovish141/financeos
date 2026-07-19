@@ -227,37 +227,39 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
     return seed / 0x7fffffff;
   };
 
-  const sales: {
-    companyId: string;
-    productId: string;
-    customerId: string;
-    quantity: number;
-    unitPrice: number;
-    soldAt: Date;
-    channel: SalesChannel;
-  }[] = [];
+  // A realized-price line for one product within an order.
+  const priceLine = (p: { id: string; price: number }, bulk: boolean) => {
+    const quantity = bulk ? 40 + Math.floor(rand() * 260) : 5 + Math.floor(rand() * 45);
+    const discount = (bulk ? 0.06 : 0.0) + rand() * 0.12; // 0–18% off catalog
+    return { companyId, productId: p.id, quantity, unitPrice: Math.round(p.price * (1 - discount)) };
+  };
+
+  // Build orders (invoices): each is booked against one customer/date/channel and
+  // carries 1–3 product line items, so the demo shows realistic multi-product sales.
   for (const p of seededProducts) {
-    const orders = 4 + Math.floor(rand() * 5); // 4–8 orders each
-    for (let i = 0; i < orders; i++) {
+    const orderCount = 4 + Math.floor(rand() * 5); // 4–8 orders featuring this product
+    for (let i = 0; i < orderCount; i++) {
       const customer = seededCustomers[Math.floor(rand() * seededCustomers.length)];
       const channel = customer.channel;
-      // Wholesale/distributor/export skew to bigger volumes + deeper discounts.
       const bulk = channel === "WHOLESALE" || channel === "DISTRIBUTOR" || channel === "EXPORT";
-      const quantity = bulk ? 40 + Math.floor(rand() * 260) : 5 + Math.floor(rand() * 45);
-      const discount = (bulk ? 0.06 : 0.0) + rand() * 0.12; // 0–18% off catalog
-      const unitPrice = Math.round(p.price * (1 - discount));
-      sales.push({
-        companyId,
-        productId: p.id,
-        customerId: customer.id,
-        quantity,
-        unitPrice,
-        soldAt: daysAgo(Math.floor(rand() * 120)),
-        channel,
+
+      // Always include p; sometimes add 1–2 more distinct products to the invoice.
+      const lineProducts = [p];
+      const extra = Math.floor(rand() * 3); // 0–2 extra lines
+      for (let e = 0; e < extra; e++) {
+        const other = seededProducts[Math.floor(rand() * seededProducts.length)];
+        if (!lineProducts.some((lp) => lp.id === other.id)) lineProducts.push(other);
+      }
+
+      await prisma.order.create({
+        data: {
+          companyId,
+          customerId: customer.id,
+          soldAt: daysAgo(Math.floor(rand() * 120)),
+          channel,
+          items: { create: lineProducts.map((lp) => priceLine(lp, bulk)) },
+        },
       });
     }
-  }
-  if (sales.length > 0) {
-    await prisma.sale.createMany({ data: sales });
   }
 }

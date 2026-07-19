@@ -56,6 +56,7 @@ model Company {
   templates    Template[]
   products     Product[]
   customers    Customer[]
+  orders       Order[]
   sales        Sale[]
 
   createdAt DateTime @default(now())
@@ -365,25 +366,43 @@ enum SalesChannel {
   OTHER
 }
 
-model Sale {
+// A sale order (invoice) — the real-world unit of a sale, booked against one
+// customer on one date/channel. Holds one or more product line items (Sale).
+model Order {
   id         String        @id @default(cuid())
   companyId  String
-  productId  String
   customerId String?
-  quantity   Float
-  unitPrice  Float
   soldAt     DateTime
   channel    SalesChannel?
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
   company    Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  product    Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
   customer   Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items      Sale[]
 
   @@index([companyId, soldAt])
-  @@index([companyId, productId])
-  @@index([productId])
   @@index([customerId])
+}
+
+// One product line within an Order — the atomic unit all per-product margin and
+// profit analytics aggregate over. Shared fields (customer/date/channel) live on
+// the parent Order.
+model Sale {
+  id        String   @id @default(cuid())
+  companyId String
+  orderId   String
+  productId String
+  quantity  Float
+  unitPrice Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([orderId])
+  @@index([productId])
 }
 
 model Customer {
@@ -400,7 +419,7 @@ model Customer {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   company   Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  sales     Sale[]
+  orders    Order[]
 
   @@index([companyId, archived])
 }

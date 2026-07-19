@@ -14,13 +14,19 @@ import type { Prisma, SalesChannel } from "@prisma/client";
 // Create / update / delete
 // ---------------------------------------------------------------------------
 
-const saleSchema = z.object({
-  productId: z.string().min(1, "Pick a product"),
-  quantity: z.coerce.number().positive("Quantity must be greater than 0"),
-  unitPrice: z.coerce.number().nonnegative("Unit price must be ≥ 0"),
+// A sale is an order (one customer / date / channel) with one or more product
+// line items. The header fields are validated separately from the item array,
+// which the drawer submits as a JSON `items` field (mirrors product `comps`).
+const orderHeaderSchema = z.object({
   soldAt: z.string().min(1, "Sale date is required"),
   channel: z.enum(SALES_CHANNELS).optional().or(z.literal("")),
   customerId: z.string().optional(),
+});
+
+const orderItemSchema = z.object({
+  productId: z.string().min(1, "Pick a product"),
+  quantity: z.coerce.number().positive("Quantity must be greater than 0"),
+  unitPrice: z.coerce.number().nonnegative("Unit price must be ≥ 0"),
 });
 
 function toDate(s: string): Date | null {
@@ -29,6 +35,15 @@ function toDate(s: string): Date | null {
 }
 
 type Db = Awaited<ReturnType<typeof requireSession>>["db"];
+type OrderItem = z.infer<typeof orderItemSchema>;
+
+function parseItems(formData: FormData) {
+  try {
+    return z.array(orderItemSchema).safeParse(JSON.parse(String(formData.get("items") || "[]")));
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Validate an optional customerId against this tenant. Returns the id, null when
@@ -41,34 +56,55 @@ async function resolveCustomerId(db: Db, customerId: string | undefined): Promis
   return found ? found.id : false;
 }
 
-export async function createSale(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  const { db, role, companyId } = await requireSession();
-  assertCanEdit(role);
+/**
+ * Shared validation for create/update: header, items, future-date, and that every
+ * referenced product + the optional customer belong to this tenant. Returns the
+ * resolved values or an error string.
+ */
+async function validateOrder(
+  db: Db,
+  formData: FormData,
+): Promise<{ error: string } | { soldAt: Date; channel: SalesChannel | null; customerId: string | null; items: OrderItem[] }> {
+  const parsed = orderHeaderSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? "Invalid sale." };
+  const header = parsed.data;
 
-  const parsed = saleSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { error: parsed.error.errors[0]?.message };
-  const data = parsed.data;
+  const itemsParsed = parseItems(formData);
+  if (!itemsParsed) return { error: "Could not read the product lines." };
+  if (!itemsParsed.success) return { error: itemsParsed.error.errors[0]?.message ?? "Invalid product line." };
+  const items = itemsParsed.data;
+  if (items.length === 0) return { error: "Add at least one product to the sale." };
 
-  const soldAt = toDate(data.soldAt);
+  const soldAt = toDate(header.soldAt);
   if (!soldAt) return { error: "Invalid sale date." };
   if (isFutureDate(soldAt)) return { error: "Sale date can't be in the future." };
 
-  // Confirm the product belongs to this tenant (tenantDb scopes the query).
-  const product = await db.product.findFirst({ where: { id: data.productId }, select: { id: true } });
-  if (!product) return { error: "That product no longer exists." };
+  const productIds = [...new Set(items.map((i) => i.productId))];
+  const products = await db.product.findMany({ where: { id: { in: productIds } }, select: { id: true } });
+  if (products.length !== productIds.length) return { error: "One or more products no longer exist." };
 
-  const customerId = await resolveCustomerId(db, data.customerId);
+  const customerId = await resolveCustomerId(db, header.customerId);
   if (customerId === false) return { error: "That customer no longer exists." };
 
-  await db.sale.create({
+  return { soldAt, channel: header.channel ? (header.channel as SalesChannel) : null, customerId, items };
+}
+
+export async function createOrder(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const { db, role, companyId } = await requireSession();
+  assertCanEdit(role);
+
+  const v = await validateOrder(db, formData);
+  if ("error" in v) return { error: v.error };
+
+  await db.order.create({
     data: {
       companyId,
-      productId: data.productId,
-      customerId,
-      quantity: data.quantity,
-      unitPrice: data.unitPrice,
-      soldAt,
-      channel: data.channel ? (data.channel as SalesChannel) : null,
+      customerId: v.customerId,
+      soldAt: v.soldAt,
+      channel: v.channel,
+      items: {
+        create: v.items.map((i) => ({ companyId, productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice })),
+      },
     },
   });
 
@@ -78,39 +114,33 @@ export async function createSale(_prev: ActionResult, formData: FormData): Promi
   return { ok: true };
 }
 
-export async function updateSale(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  const { db, role } = await requireSession();
+export async function updateOrder(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const { db, role, companyId } = await requireSession();
   assertCanEdit(role);
 
   const id = String(formData.get("id") || "");
   if (!id) return { error: "Missing sale id." };
-  const parsed = saleSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { error: parsed.error.errors[0]?.message };
-  const data = parsed.data;
 
-  const soldAt = toDate(data.soldAt);
-  if (!soldAt) return { error: "Invalid sale date." };
-  if (isFutureDate(soldAt)) return { error: "Sale date can't be in the future." };
+  const v = await validateOrder(db, formData);
+  if ("error" in v) return { error: v.error };
 
-  const existing = await db.sale.findFirst({ where: { id }, select: { id: true } });
+  const existing = await db.order.findFirst({ where: { id }, select: { id: true } });
   if (!existing) return { error: "Sale not found." };
 
-  const product = await db.product.findFirst({ where: { id: data.productId }, select: { id: true } });
-  if (!product) return { error: "That product no longer exists." };
-
-  const customerId = await resolveCustomerId(db, data.customerId);
-  if (customerId === false) return { error: "That customer no longer exists." };
-
-  await db.sale.update({
-    where: { id },
-    data: {
-      productId: data.productId,
-      customerId,
-      quantity: data.quantity,
-      unitPrice: data.unitPrice,
-      soldAt,
-      channel: data.channel ? (data.channel as SalesChannel) : null,
-    },
+  // Replace the line items wholesale — simplest correct semantics for an edit.
+  await db.$transaction(async (tx) => {
+    await tx.sale.deleteMany({ where: { orderId: id } });
+    await tx.order.update({
+      where: { id },
+      data: {
+        customerId: v.customerId,
+        soldAt: v.soldAt,
+        channel: v.channel,
+        items: {
+          create: v.items.map((i) => ({ companyId, productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice })),
+        },
+      },
+    });
   });
 
   revalidatePath("/sales");
@@ -119,10 +149,10 @@ export async function updateSale(_prev: ActionResult, formData: FormData): Promi
   return { ok: true };
 }
 
-export async function deleteSale(id: string) {
+export async function deleteOrder(id: string) {
   const { db, role } = await requireSession();
   assertCanEdit(role);
-  await db.sale.deleteMany({ where: { id } });
+  await db.order.deleteMany({ where: { id } }); // line items cascade
   revalidatePath("/sales");
   revalidatePath("/products");
   revalidatePath("/dashboard");
@@ -133,7 +163,8 @@ export async function deleteSale(id: string) {
 // ---------------------------------------------------------------------------
 
 export interface ImportResult {
-  imported: number;
+  imported: number;        // product line items recorded
+  orders?: number;         // orders (invoices) those line items were grouped into
   errors: { line: number; error: string }[];
   // Non-fatal notes: the sale imported, but something needs the user's attention
   // (e.g. a named customer wasn't found or was ambiguous, so it was left unlinked).
@@ -169,51 +200,80 @@ export async function importSalesCsv(
   // import the sale (unlinked) and are surfaced as warnings.
   const { byName, ambiguous } = await matchCustomerIds(db, valid.map((v) => v.customer ?? ""));
 
-  const toInsert: { productId: string; customerId: string | null; quantity: number; unitPrice: number; soldAt: Date; channel: SalesChannel | null }[] = [];
   const skuErrors: { line: number; error: string }[] = [];
   const warnings: { line: number; error: string }[] = [];
-  valid.forEach((v) => {
-    const productId = bySku.get(v.sku.toLowerCase());
-    if (!productId) {
-      skuErrors.push({ line: v.line, error: `No product with SKU "${v.sku}".` });
-      return;
-    }
+
+  // Group rows into orders: rows sharing a non-empty `invoice` id become one
+  // multi-line order; a row without an invoice id is its own single-line order.
+  // Insertion order is preserved so line reporting stays in file order.
+  const groups = new Map<string, typeof valid>();
+  valid.forEach((v, idx) => {
+    const key = v.invoice ? `inv:${v.invoice.toLowerCase()}` : `row:${idx}`;
+    const list = groups.get(key) ?? [];
+    list.push(v);
+    groups.set(key, list);
+  });
+
+  type OrderInsert = {
+    customerId: string | null;
+    soldAt: Date;
+    channel: SalesChannel | null;
+    lines: { productId: string; quantity: number; unitPrice: number }[];
+  };
+  const orders: OrderInsert[] = [];
+
+  for (const rows of groups.values()) {
+    const head = rows[0]; // header (customer / date / channel) comes from the first row
 
     let customerId: string | null = null;
-    if (v.customer) {
-      const key = v.customer.trim().toLowerCase();
+    if (head.customer) {
+      const key = head.customer.trim().toLowerCase();
       if (ambiguous.has(key)) {
-        warnings.push({ line: v.line, error: `Customer "${v.customer}" matches more than one record — sale imported without a customer link.` });
+        warnings.push({ line: head.line, error: `Customer "${head.customer}" matches more than one record — order imported without a customer link.` });
       } else if (byName.has(key)) {
         customerId = byName.get(key)!;
       } else {
-        warnings.push({ line: v.line, error: `Customer "${v.customer}" not found — sale imported without a customer link.` });
+        warnings.push({ line: head.line, error: `Customer "${head.customer}" not found — order imported without a customer link.` });
       }
     }
 
-    toInsert.push({
-      productId,
-      customerId,
-      quantity: v.quantity,
-      unitPrice: v.unitPrice,
-      soldAt: v.soldAt,
-      channel: v.channel,
-    });
-  });
+    const lines: OrderInsert["lines"] = [];
+    for (const r of rows) {
+      const productId = bySku.get(r.sku.toLowerCase());
+      if (!productId) {
+        skuErrors.push({ line: r.line, error: `No product with SKU "${r.sku}".` });
+        continue;
+      }
+      lines.push({ productId, quantity: r.quantity, unitPrice: r.unitPrice });
+    }
+    if (lines.length === 0) continue; // every line in this order failed — nothing to record
+    orders.push({ customerId, soldAt: head.soldAt, channel: head.channel, lines });
+  }
 
-  if (toInsert.length > 0) {
+  if (orders.length > 0) {
     await db.$transaction(async (tx) => {
-      for (const s of toInsert) {
-        await tx.sale.create({ data: { companyId, ...s } });
+      for (const o of orders) {
+        await tx.order.create({
+          data: {
+            companyId,
+            customerId: o.customerId,
+            soldAt: o.soldAt,
+            channel: o.channel,
+            items: { create: o.lines.map((l) => ({ companyId, productId: l.productId, quantity: l.quantity, unitPrice: l.unitPrice })) },
+          },
+        });
       }
     });
   }
+
+  const importedLines = orders.reduce((s, o) => s + o.lines.length, 0);
 
   revalidatePath("/sales");
   revalidatePath("/products");
   revalidatePath("/dashboard");
   return {
-    imported: toInsert.length,
+    imported: importedLines,
+    orders: orders.length,
     errors: [...errors, ...skuErrors].sort((a, b) => a.line - b.line),
     warnings: warnings.sort((a, b) => a.line - b.line),
     ok: true,
@@ -224,53 +284,73 @@ export async function importSalesCsv(
 // Live search — filtered sale rows for the table
 // ---------------------------------------------------------------------------
 
-export interface SaleListItem {
+export interface OrderLine {
   id: string;
   productId: string;
   productName: string;
   sku: string;
-  customerId: string | null;
-  customerName: string | null;
   quantity: number;
   unitPrice: number;
   revenue: number;
-  soldAt: string;
-  channel: SalesChannel | null;
 }
 
-export async function searchSales(input: { q?: string; channel?: string; customerId?: string }): Promise<SaleListItem[]> {
+export interface OrderListItem {
+  id: string;
+  soldAt: string;
+  channel: SalesChannel | null;
+  customerId: string | null;
+  customerName: string | null;
+  itemCount: number;
+  quantity: number; // total units across all lines
+  revenue: number;  // total order revenue
+  items: OrderLine[];
+}
+
+export async function searchOrders(input: { q?: string; channel?: string; customerId?: string }): Promise<OrderListItem[]> {
   const { db } = await requireSession();
 
-  const where: Prisma.SaleWhereInput = {};
+  const where: Prisma.OrderWhereInput = {};
   if (input.q) {
     where.OR = [
-      { product: { name: { contains: input.q, mode: "insensitive" } } },
-      { product: { sku: { contains: input.q, mode: "insensitive" } } },
+      { items: { some: { product: { name: { contains: input.q, mode: "insensitive" } } } } },
+      { items: { some: { product: { sku: { contains: input.q, mode: "insensitive" } } } } },
       { customer: { name: { contains: input.q, mode: "insensitive" } } },
     ];
   }
   if (input.channel && input.channel !== "") where.channel = input.channel as SalesChannel;
   if (input.customerId) where.customerId = input.customerId;
 
-  const rows = await db.sale.findMany({
+  const rows = await db.order.findMany({
     where,
     orderBy: { soldAt: "desc" },
-    include: { product: { select: { name: true, sku: true } }, customer: { select: { name: true } } },
+    include: {
+      items: { include: { product: { select: { name: true, sku: true } } } },
+      customer: { select: { name: true } },
+    },
   });
 
-  return rows.map((s) => ({
-    id: s.id,
-    productId: s.productId,
-    productName: s.product.name,
-    sku: s.product.sku,
-    customerId: s.customerId,
-    customerName: s.customer?.name ?? null,
-    quantity: s.quantity,
-    unitPrice: s.unitPrice,
-    revenue: s.quantity * s.unitPrice,
-    soldAt: s.soldAt.toISOString(),
-    channel: s.channel,
-  }));
+  return rows.map((o) => {
+    const items: OrderLine[] = o.items.map((it) => ({
+      id: it.id,
+      productId: it.productId,
+      productName: it.product.name,
+      sku: it.product.sku,
+      quantity: it.quantity,
+      unitPrice: it.unitPrice,
+      revenue: it.quantity * it.unitPrice,
+    }));
+    return {
+      id: o.id,
+      soldAt: o.soldAt.toISOString(),
+      channel: o.channel,
+      customerId: o.customerId,
+      customerName: o.customer?.name ?? null,
+      itemCount: items.length,
+      quantity: items.reduce((s, x) => s + x.quantity, 0),
+      revenue: items.reduce((s, x) => s + x.revenue, 0),
+      items,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

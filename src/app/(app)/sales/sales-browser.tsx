@@ -1,15 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Search, Trash2, Loader2, ShoppingCart } from "lucide-react";
+import { Search, Trash2, Loader2, ShoppingCart, Pencil, ChevronRight } from "lucide-react";
 import { EmptyState } from "@/components/ui";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { formatMoney, formatDate } from "@/lib/utils";
-import { deleteSale, searchSales, type SaleListItem } from "@/server/actions/sales-actions";
+import { deleteOrder, searchOrders, type OrderListItem } from "@/server/actions/sales-actions";
 import { NewSaleButton, openSaleEdit, onSalesChanged } from "./sales-drawers";
 import type { SalesChannel } from "@prisma/client";
 
-const GRID = "1.9fr 0.7fr 0.9fr 0.9fr 0.9fr 1fr 74px";
+const GRID = "1.9fr 0.7fr 0.8fr 1fr 0.9fr 1fr 74px";
 
 const CHANNEL_LABEL: Record<SalesChannel, string> = {
   RETAIL: "Retail",
@@ -44,7 +44,7 @@ export function SalesBrowser({
   initialQuery,
   initialChannel,
 }: {
-  initialItems: SaleListItem[];
+  initialItems: OrderListItem[];
   currency: string;
   editable: boolean;
   initialQuery: string;
@@ -54,6 +54,16 @@ export function SalesBrowser({
   const [channel, setChannel] = useState(initialChannel);
   const [items, setItems] = useState(initialItems);
   const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function toggleExpanded(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const firstRender = useRef(true);
   const reqId = useRef(0);
@@ -66,7 +76,7 @@ export function SalesBrowser({
     const id = ++reqId.current;
     setLoading(true);
     const t = setTimeout(async () => {
-      const rows = await searchSales({ q, channel });
+      const rows = await searchOrders({ q, channel });
       if (id === reqId.current) {
         setItems(rows);
         setLoading(false);
@@ -85,7 +95,7 @@ export function SalesBrowser({
 
   async function refetch() {
     const id = ++reqId.current;
-    const rows = await searchSales({ q, channel });
+    const rows = await searchOrders({ q, channel });
     if (id === reqId.current) setItems(rows);
   }
 
@@ -133,7 +143,7 @@ export function SalesBrowser({
       ) : (
         <>
           <div className="mb-3 flex gap-3.5">
-            <SummaryTile label="Sales shown" value={items.length.toLocaleString("en-IN")} />
+            <SummaryTile label="Orders shown" value={items.length.toLocaleString("en-IN")} />
             <SummaryTile label="Units sold" value={totalUnits.toLocaleString("en-IN")} />
             <SummaryTile label="Revenue" value={formatMoney(totalRevenue, currency)} accent />
           </div>
@@ -143,59 +153,88 @@ export function SalesBrowser({
               className="grid gap-3 border-b border-[var(--border)] px-[22px] py-[13px] font-mono text-[10px] uppercase tracking-[0.1em] text-ink-500"
               style={{ gridTemplateColumns: GRID }}
             >
-              <span>Product</span>
-              <span className="text-right">Qty</span>
-              <span className="text-right">Unit price</span>
+              <span>Sale</span>
+              <span className="text-right">Items</span>
+              <span className="text-right">Units</span>
               <span className="text-right">Revenue</span>
               <span>Channel</span>
               <span>Date</span>
               <span />
             </div>
 
-            {items.map((s) => (
-              <div
-                key={s.id}
-                className="grid items-center gap-3 border-b border-[var(--border)] px-[22px] py-[14px] transition-colors last:border-0 hover:bg-ink-50/60"
-                style={{ gridTemplateColumns: GRID }}
-              >
-                <button type="button" className="flex min-w-0 flex-col text-left" onClick={() => editable && openSaleEdit(s)}>
-                  <span className="truncate text-[14px] font-semibold text-ink-900">{s.productName}</span>
-                  <span className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400" title={s.customerName ?? s.sku}>
-                    {s.sku}
-                    {s.customerName && ` · ${s.customerName}`}
-                  </span>
-                </button>
-                <div className="text-right font-mono text-[13px] text-ink-700">{s.quantity.toLocaleString("en-IN")}</div>
-                <div className="text-right font-mono text-[13px] text-ink-600">{formatMoney(s.unitPrice, currency)}</div>
-                <div className="text-right font-mono text-[13px] font-semibold text-ink-900">{formatMoney(s.revenue, currency)}</div>
-                <div className="flex items-center gap-2 text-[12.5px] text-ink-600">
-                  {s.channel ? (
-                    <>
-                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: CHANNEL_DOT[s.channel] }} />
-                      {CHANNEL_LABEL[s.channel]}
-                    </>
-                  ) : (
-                    <span className="text-ink-300">—</span>
+            {items.map((o) => {
+              const isOpen = expanded.has(o.id);
+              const summary = o.items.map((it) => it.productName).join(", ");
+              return (
+                <div key={o.id} className="border-b border-[var(--border)] last:border-0">
+                  <div
+                    className="grid items-center gap-3 px-[22px] py-[14px] transition-colors hover:bg-ink-50/60"
+                    style={{ gridTemplateColumns: GRID }}
+                  >
+                    <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={() => toggleExpanded(o.id)}>
+                      <ChevronRight className={`h-4 w-4 shrink-0 text-ink-400 transition-transform ${isOpen ? "rotate-90" : ""}`} strokeWidth={2} />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate text-[14px] font-semibold text-ink-900">{o.customerName ?? "Walk-in / unlinked"}</span>
+                        <span className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400" title={summary}>{summary}</span>
+                      </span>
+                    </button>
+                    <div className="text-right font-mono text-[13px] text-ink-700">{o.itemCount.toLocaleString("en-IN")}</div>
+                    <div className="text-right font-mono text-[13px] text-ink-700">{o.quantity.toLocaleString("en-IN")}</div>
+                    <div className="text-right font-mono text-[13px] font-semibold text-ink-900">{formatMoney(o.revenue, currency)}</div>
+                    <div className="flex items-center gap-2 text-[12.5px] text-ink-600">
+                      {o.channel ? (
+                        <>
+                          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: CHANNEL_DOT[o.channel] }} />
+                          {CHANNEL_LABEL[o.channel]}
+                        </>
+                      ) : (
+                        <span className="text-ink-300">—</span>
+                      )}
+                    </div>
+                    <div className="font-mono text-[12px] text-ink-500">{formatDate(o.soldAt)}</div>
+                    <div className="flex justify-end gap-1.5">
+                      {editable && (
+                        <>
+                          <button type="button" className="icon-btn" title="Edit" onClick={() => openSaleEdit(o)}>
+                            <Pencil className="h-[15px] w-[15px]" strokeWidth={1.9} />
+                          </button>
+                          <ConfirmDialog
+                            action={deleteOrder.bind(null, o.id)}
+                            heading={`Delete this sale?`}
+                            body={`${o.itemCount} product${o.itemCount > 1 ? "s" : ""} on ${formatDate(o.soldAt)}. This can't be undone.`}
+                            confirmLabel="Delete"
+                            triggerTitle="Delete"
+                            triggerClassName="icon-btn icon-btn-danger"
+                            onConfirmed={refetch}
+                          >
+                            <Trash2 className="h-[15px] w-[15px]" strokeWidth={1.9} />
+                          </ConfirmDialog>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {isOpen && (
+                    <div className="bg-ink-50/40 px-[22px] pb-3 pt-1">
+                      {o.items.map((it) => (
+                        <div key={it.id} className="grid items-center gap-3 py-1.5" style={{ gridTemplateColumns: GRID }}>
+                          <div className="flex min-w-0 flex-col pl-6">
+                            <span className="truncate text-[13px] font-medium text-ink-800">{it.productName}</span>
+                            <span className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400">{it.sku}</span>
+                          </div>
+                          <div className="text-right font-mono text-[12px] text-ink-500">{it.quantity.toLocaleString("en-IN")} ×</div>
+                          <div className="text-right font-mono text-[12px] text-ink-500">{formatMoney(it.unitPrice, currency)}</div>
+                          <div className="text-right font-mono text-[12.5px] font-semibold text-ink-800">{formatMoney(it.revenue, currency)}</div>
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
-                <div className="font-mono text-[12px] text-ink-500">{formatDate(s.soldAt)}</div>
-                <div className="flex justify-end gap-1.5">
-                  {editable && (
-                    <ConfirmDialog
-                      action={deleteSale.bind(null, s.id)}
-                      heading={`Delete this sale?`}
-                      body={`${s.quantity} × ${s.productName} on ${formatDate(s.soldAt)}. This can't be undone.`}
-                      confirmLabel="Delete"
-                      triggerTitle="Delete"
-                      triggerClassName="icon-btn icon-btn-danger"
-                      onConfirmed={refetch}
-                    >
-                      <Trash2 className="h-[15px] w-[15px]" strokeWidth={1.9} />
-                    </ConfirmDialog>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </>
       )}

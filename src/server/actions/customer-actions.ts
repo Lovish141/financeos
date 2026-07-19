@@ -203,13 +203,14 @@ export async function searchCustomers(input: { q?: string; archived?: boolean })
   const rows = await db.customer.findMany({
     where,
     orderBy: { name: "asc" },
-    include: { sales: { select: { quantity: true, unitPrice: true } } },
+    include: { orders: { select: { items: { select: { quantity: true, unitPrice: true } } } } },
   });
 
   return rows.map((c) => {
-    const orders = c.sales.length;
-    const unitsSold = c.sales.reduce((s, x) => s + x.quantity, 0);
-    const revenue = c.sales.reduce((s, x) => s + x.quantity * x.unitPrice, 0);
+    const lines = c.orders.flatMap((o) => o.items);
+    const orders = c.orders.length;
+    const unitsSold = lines.reduce((s, x) => s + x.quantity, 0);
+    const revenue = lines.reduce((s, x) => s + x.quantity * x.unitPrice, 0);
     return {
       id: c.id,
       name: c.name,
@@ -274,9 +275,9 @@ export async function getCustomerDetail(id: string): Promise<CustomerDetail | { 
   const c = await db.customer.findFirst({
     where: { id },
     include: {
-      sales: {
+      orders: {
         orderBy: { soldAt: "desc" },
-        include: { product: { select: { name: true, sku: true } } },
+        include: { items: { include: { product: { select: { name: true, sku: true } } } } },
       },
     },
   });
@@ -284,8 +285,21 @@ export async function getCustomerDetail(id: string): Promise<CustomerDetail | { 
 
   const company = await prisma.company.findUnique({ where: { id: companyId }, select: { baseCurrency: true } });
 
-  const unitsSold = c.sales.reduce((s, x) => s + x.quantity, 0);
-  const revenue = c.sales.reduce((s, x) => s + x.quantity * x.unitPrice, 0);
+  // Flatten line items across the customer's orders (newest order first), each
+  // carrying its parent order's date, for the profile rollup + recent list.
+  const lines = c.orders.flatMap((o) =>
+    o.items.map((it) => ({
+      id: it.id,
+      productName: it.product.name,
+      sku: it.product.sku,
+      quantity: it.quantity,
+      unitPrice: it.unitPrice,
+      revenue: it.quantity * it.unitPrice,
+      soldAt: o.soldAt.toISOString(),
+    })),
+  );
+  const unitsSold = lines.reduce((s, x) => s + x.quantity, 0);
+  const revenue = lines.reduce((s, x) => s + x.revenue, 0);
 
   return {
     ok: true,
@@ -299,17 +313,9 @@ export async function getCustomerDetail(id: string): Promise<CustomerDetail | { 
     notes: c.notes,
     archived: c.archived,
     currency: company?.baseCurrency ?? "INR",
-    orders: c.sales.length,
+    orders: c.orders.length,
     unitsSold,
     revenue,
-    recent: c.sales.slice(0, 12).map((s) => ({
-      id: s.id,
-      productName: s.product.name,
-      sku: s.product.sku,
-      quantity: s.quantity,
-      unitPrice: s.unitPrice,
-      revenue: s.quantity * s.unitPrice,
-      soldAt: s.soldAt.toISOString(),
-    })),
+    recent: lines.slice(0, 12),
   };
 }

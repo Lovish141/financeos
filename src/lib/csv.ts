@@ -156,6 +156,7 @@ export function parseChannel(raw: string): SalesChannelValue | null | undefined 
 
 export interface ParsedSaleRow {
   line: number; // 1-based source line (header = line 1) for accurate reporting
+  invoice: string | null; // optional group key — rows sharing one become one order
   sku: string;
   quantity: number;
   unitPrice: number;
@@ -225,6 +226,7 @@ export function parseSalesCsv(text: string, now: Date = new Date()): SalesCsvOut
   const iPrice = col("unit_price", "unitprice", "price");
   const iChannel = col("channel");
   const iCustomer = col("customer", "account");
+  const iInvoice = col("invoice", "invoice_no", "invoice_id", "order", "order_id");
 
   if (iSku < 0 || iQty < 0 || iDate < 0 || iPrice < 0) {
     return { valid: [], errors: [], fatal: "Header must include: sku, quantity, date, unit_price (channel, customer optional)." };
@@ -242,6 +244,7 @@ export function parseSalesCsv(text: string, now: Date = new Date()): SalesCsvOut
     const priceStr = (cells[iPrice] ?? "").trim();
     const channelStr = iChannel >= 0 ? (cells[iChannel] ?? "").trim() : "";
     const customer = iCustomer >= 0 ? (cells[iCustomer] ?? "").trim() : "";
+    const invoice = iInvoice >= 0 ? (cells[iInvoice] ?? "").trim() : "";
 
     if (!sku) { errors.push({ line, error: "Missing SKU." }); continue; }
     if (!qtyStr) { errors.push({ line, error: "Missing quantity." }); continue; }
@@ -271,7 +274,7 @@ export function parseSalesCsv(text: string, now: Date = new Date()): SalesCsvOut
       continue;
     }
 
-    valid.push({ line, sku, quantity, unitPrice, soldAt, channel, customer: customer || null });
+    valid.push({ line, invoice: invoice || null, sku, quantity, unitPrice, soldAt, channel, customer: customer || null });
   }
 
   return { valid, errors };

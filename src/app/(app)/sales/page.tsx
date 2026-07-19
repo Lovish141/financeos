@@ -1,7 +1,7 @@
 import { requireSession, canEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/ui";
-import { searchSales } from "@/server/actions/sales-actions";
+import { searchOrders } from "@/server/actions/sales-actions";
 import { customerOptions } from "@/server/actions/customer-actions";
 import { SalesBrowser } from "./sales-browser";
 import { SalesDrawers, NewSaleButton, ImportSalesButton, type ProductOption } from "./sales-drawers";
@@ -21,7 +21,7 @@ export default async function SalesPage({
   const currency = company?.baseCurrency ?? "INR";
 
   const [initialItems, productRows, customers] = await Promise.all([
-    searchSales({ q: sp.q, channel: sp.channel }),
+    searchOrders({ q: sp.q, channel: sp.channel }),
     db.product.findMany({
       where: { status: { not: "DISCONTINUED" } },
       orderBy: { name: "asc" },
