@@ -1,4 +1,4 @@
-import { requireSession, canEdit } from "@/lib/session";
+import { requireStaff, canEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { TYPE_LABELS } from "@/lib/csv";
 import { formatMoney } from "@/lib/utils";
@@ -28,7 +28,7 @@ function fixedBaseCost(
 }
 
 export default async function OnboardingPage() {
-  const { db, role, companyId } = await requireSession();
+  const { db, role, companyId } = await requireStaff();
   const editable = canEdit(role);
 
   const [

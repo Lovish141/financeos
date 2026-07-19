@@ -5,7 +5,16 @@ import { prisma } from "./prisma";
 // auto-filtered to the current tenant so application code can never leak rows
 // across companies (Module 7). Child tables (TemplateComponent,
 // TemplateVersion, CostHistory) are reached through these scoped parents.
-const SCOPED_MODELS = new Set(["MasterCost", "Template", "Product", "Sale", "Customer"]);
+const SCOPED_MODELS = new Set([
+  "MasterCost",
+  "Template",
+  "Product",
+  "Sale",
+  "Order",
+  "Customer",
+  "OrderRequest",
+  "PortalInvite",
+]);
 
 const READ_WRITE_WITH_WHERE = new Set([
   "findFirst",

@@ -1,7 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { requireSession, canEdit } from "@/lib/session";
+import { requireStaff, canEdit } from "@/lib/session";
 import { affectedProductsMany, effectiveSnapshot, getLiveMasterInfo } from "@/server/costing-service";
 import { computeProductCost, marginHealth, type MarginHealth } from "@/lib/costing";
 import { prisma } from "@/lib/prisma";
@@ -61,7 +61,7 @@ export async function runSimulation(
   _prev: SimResult | undefined,
   formData: FormData,
 ): Promise<SimResult> {
-  const { db, companyId } = await requireSession();
+  const { db, companyId } = await requireStaff();
 
   let raw: unknown;
   try {
@@ -164,7 +164,7 @@ export interface SaveSettingsResult {
  * reopens each input at its live base price.
  */
 export async function saveSimSettings(masterCostIds: string[]): Promise<SaveSettingsResult> {
-  const { db, companyId, role } = await requireSession();
+  const { db, companyId, role } = await requireStaff();
   if (!canEdit(role)) return { error: "You don't have permission to save the simulation setup." };
 
   // Keep only ids that still exist and are active, in a stable order.

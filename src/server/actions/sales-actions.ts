@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireSession, assertCanEdit } from "@/lib/session";
+import { requireStaff, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { computeProductsLive } from "@/server/costing-service";
 import { parseSalesCsv, SALES_CHANNELS, isFutureDate } from "@/lib/csv";
@@ -34,7 +34,7 @@ function toDate(s: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
-type Db = Awaited<ReturnType<typeof requireSession>>["db"];
+type Db = Awaited<ReturnType<typeof requireStaff>>["db"];
 type OrderItem = z.infer<typeof orderItemSchema>;
 
 function parseItems(formData: FormData) {
@@ -90,7 +90,7 @@ async function validateOrder(
 }
 
 export async function createOrder(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  const { db, role, companyId } = await requireSession();
+  const { db, role, companyId } = await requireStaff();
   assertCanEdit(role);
 
   const v = await validateOrder(db, formData);
@@ -115,7 +115,7 @@ export async function createOrder(_prev: ActionResult, formData: FormData): Prom
 }
 
 export async function updateOrder(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  const { db, role, companyId } = await requireSession();
+  const { db, role, companyId } = await requireStaff();
   assertCanEdit(role);
 
   const id = String(formData.get("id") || "");
@@ -150,7 +150,7 @@ export async function updateOrder(_prev: ActionResult, formData: FormData): Prom
 }
 
 export async function deleteOrder(id: string) {
-  const { db, role } = await requireSession();
+  const { db, role } = await requireStaff();
   assertCanEdit(role);
   await db.order.deleteMany({ where: { id } }); // line items cascade
   revalidatePath("/sales");
@@ -176,7 +176,7 @@ export async function importSalesCsv(
   _prev: ImportResult | undefined,
   formData: FormData,
 ): Promise<ImportResult> {
-  const { db, role, companyId } = await requireSession();
+  const { db, role, companyId } = await requireStaff();
   assertCanEdit(role);
 
   const file = formData.get("file") as File | null;
@@ -307,7 +307,7 @@ export interface OrderListItem {
 }
 
 export async function searchOrders(input: { q?: string; channel?: string; customerId?: string }): Promise<OrderListItem[]> {
-  const { db } = await requireSession();
+  const { db } = await requireStaff();
 
   const where: Prisma.OrderWhereInput = {};
   if (input.q) {
@@ -368,7 +368,7 @@ export interface ProductSalesAgg {
  * realized unit prices — the actual money in, which may differ from catalog.
  */
 export async function salesByProduct(
-  db: Awaited<ReturnType<typeof requireSession>>["db"],
+  db: Awaited<ReturnType<typeof requireStaff>>["db"],
 ): Promise<Map<string, ProductSalesAgg>> {
   const grouped = await db.sale.groupBy({
     by: ["productId"],
@@ -408,7 +408,7 @@ export interface ProductProfitRow {
  * and the volume-weighted what-if impact. Sorted by totalProfit desc.
  */
 export async function profitByProduct(): Promise<ProductProfitRow[]> {
-  const { db } = await requireSession();
+  const { db } = await requireStaff();
 
   const [productRows, agg] = await Promise.all([
     db.product.findMany({

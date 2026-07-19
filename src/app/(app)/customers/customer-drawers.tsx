@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "@/components/toaster";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { validateEmail, validatePhone, validateGstin } from "@/lib/validation";
+import { PortalAccessPanel } from "./customer-portal-panel";
 import {
   createCustomer,
   updateCustomer,
@@ -440,6 +441,8 @@ function CustomerPreviewDrawer({
                 {data.notes}
               </div>
             )}
+
+            {editable && !data.archived && <PortalAccessPanel customerId={data.id} />}
 
             <div className="mb-3 font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-500">Recent sales</div>
             {data.recent.length === 0 ? (

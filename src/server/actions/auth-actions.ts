@@ -82,5 +82,6 @@ export async function loginAction(
   if (!valid) return { error: "Invalid email or password." };
 
   await createUserSession(user.id);
-  redirect("/dashboard");
+  // Buyers land in their portal; staff land in the ops app.
+  redirect(user.role === "BUYER" ? "/portal" : "/dashboard");
 }

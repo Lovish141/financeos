@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireSession, assertCanEdit } from "@/lib/session";
+import { requireStaff, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { SALES_CHANNELS } from "@/lib/csv";
 import { validateCustomerFields } from "@/lib/validation";
@@ -43,7 +43,7 @@ async function nameTaken(db: TenantDb, name: string, excludeId?: string): Promis
 }
 
 export async function createCustomer(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  const { db, role, companyId } = await requireSession();
+  const { db, role, companyId } = await requireStaff();
   assertCanEdit(role);
 
   const parsed = customerSchema.safeParse(Object.fromEntries(formData));
@@ -77,7 +77,7 @@ export async function createCustomer(_prev: ActionResult, formData: FormData): P
 }
 
 export async function updateCustomer(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  const { db, role } = await requireSession();
+  const { db, role } = await requireStaff();
   assertCanEdit(role);
 
   const id = String(formData.get("id") || "");
@@ -116,7 +116,7 @@ export async function updateCustomer(_prev: ActionResult, formData: FormData): P
 }
 
 export async function archiveCustomer(id: string) {
-  const { db, role } = await requireSession();
+  const { db, role } = await requireStaff();
   assertCanEdit(role);
   await db.customer.updateMany({ where: { id }, data: { archived: true } });
   revalidatePath("/customers");
@@ -124,7 +124,7 @@ export async function archiveCustomer(id: string) {
 }
 
 export async function restoreCustomer(id: string) {
-  const { db, role } = await requireSession();
+  const { db, role } = await requireStaff();
   assertCanEdit(role);
   await db.customer.updateMany({ where: { id }, data: { archived: false } });
   revalidatePath("/customers");
@@ -188,7 +188,7 @@ export interface CustomerListItem {
 }
 
 export async function searchCustomers(input: { q?: string; archived?: boolean }): Promise<CustomerListItem[]> {
-  const { db } = await requireSession();
+  const { db } = await requireStaff();
 
   const where: Prisma.CustomerWhereInput = { archived: input.archived ?? false };
   if (input.q) {
@@ -238,7 +238,7 @@ export interface CustomerOption {
 }
 
 export async function customerOptions(): Promise<CustomerOption[]> {
-  const { db } = await requireSession();
+  const { db } = await requireStaff();
   const rows = await db.customer.findMany({
     where: { archived: false },
     orderBy: { name: "asc" },
@@ -270,7 +270,7 @@ export interface CustomerDetail {
 }
 
 export async function getCustomerDetail(id: string): Promise<CustomerDetail | { ok: false; error: string }> {
-  const { db, companyId } = await requireSession();
+  const { db, companyId } = await requireStaff();
 
   const c = await db.customer.findFirst({
     where: { id },

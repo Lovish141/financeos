@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireSession, isAdmin } from "@/lib/session";
+import { requireStaff, isAdmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import type { ActionResult } from "./cost-actions";
 
@@ -20,7 +20,7 @@ export async function updateCompanySettings(
   _prev: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const { companyId, role } = await requireSession();
+  const { companyId, role } = await requireStaff();
   if (!isAdmin(role)) return { error: "Only an Admin can change company settings." };
 
   const parsed = schema.safeParse(Object.fromEntries(formData));

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireSession, assertCanEdit } from "@/lib/session";
+import { requireStaff, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { buildSnapshot, computeProductsLive } from "@/server/costing-service";
 import type { Prisma } from "@prisma/client";
@@ -23,7 +23,7 @@ export interface TemplateListItem {
 }
 
 export async function searchTemplates(input: { q?: string }): Promise<TemplateListItem[]> {
-  const { db } = await requireSession();
+  const { db } = await requireStaff();
 
   const where: Prisma.TemplateWhereInput = {};
   if (input.q) {
@@ -91,7 +91,7 @@ export interface TemplateDraft {
 }
 
 export async function getTemplateDraft(id: string): Promise<TemplateDraft | { ok: false; error: string }> {
-  const { db } = await requireSession();
+  const { db } = await requireStaff();
   const t = await db.template.findFirst({
     where: { id },
     include: { components: { orderBy: { sortOrder: "asc" } } },
@@ -132,7 +132,7 @@ export interface TemplateDetail {
 }
 
 export async function getTemplateDetail(id: string): Promise<TemplateDetail | { ok: false; error: string }> {
-  const { db, companyId } = await requireSession();
+  const { db, companyId } = await requireStaff();
   const t = await db.template.findFirst({
     where: { id },
     include: {
@@ -216,7 +216,7 @@ export async function saveTemplateForm(input: {
   category?: string;
   lines: TemplateLineInput[];
 }): Promise<TemplateFormResult> {
-  const { db, role, companyId } = await requireSession();
+  const { db, role, companyId } = await requireStaff();
   assertCanEdit(role);
 
   const parsed = formSchema.safeParse(input);
@@ -269,7 +269,7 @@ export async function saveTemplateForm(input: {
 }
 
 export async function cloneTemplate(id: string): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const { db, role, companyId } = await requireSession();
+  const { db, role, companyId } = await requireStaff();
   assertCanEdit(role);
 
   const source = await db.template.findFirst({
@@ -309,7 +309,7 @@ export async function cloneTemplate(id: string): Promise<{ ok: boolean; id?: str
  * component rows then cascade from the template.
  */
 export async function deleteTemplate(id: string): Promise<void> {
-  const { db, role } = await requireSession();
+  const { db, role } = await requireStaff();
   assertCanEdit(role);
 
   const owned = await db.template.findFirst({ where: { id }, select: { id: true } });

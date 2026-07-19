@@ -7,12 +7,14 @@ declare module "next-auth" {
       id: string;
       role: Role;
       companyId: string;
+      customerId: string | null;
     } & DefaultSession["user"];
   }
 
   interface User {
     role?: Role;
     companyId?: string;
+    customerId?: string | null;
   }
 }
 

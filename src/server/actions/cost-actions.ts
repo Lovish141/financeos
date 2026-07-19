@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireSession, assertCanEdit } from "@/lib/session";
+import { requireStaff, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { affectedProducts } from "@/server/costing-service";
 import { snapshotProducts } from "@/server/product-history";
@@ -23,7 +23,7 @@ export async function createMasterCost(
   _prev: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const { db, role, userId, companyId } = await requireSession();
+  const { db, role, userId, companyId } = await requireStaff();
   assertCanEdit(role);
 
   const parsed = costSchema.safeParse(Object.fromEntries(formData));
@@ -56,7 +56,7 @@ export async function updateMasterCost(
   _prev: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const { db, role, userId } = await requireSession();
+  const { db, role, userId } = await requireStaff();
   assertCanEdit(role);
 
   const id = String(formData.get("id"));
@@ -129,7 +129,7 @@ export interface MasterCostImpact {
 }
 
 export async function getMasterCostImpact(id: string): Promise<MasterCostImpact> {
-  const { db } = await requireSession();
+  const { db } = await requireStaff();
 
   const [templates, products] = await Promise.all([
     db.template.findMany({
@@ -165,7 +165,7 @@ export interface MasterCostDetail {
 
 /** Preview payload for a cost item — current value + append-only price history. */
 export async function getMasterCostDetail(id: string): Promise<MasterCostDetail | { ok: false; error: string }> {
-  const { db, companyId } = await requireSession();
+  const { db, companyId } = await requireStaff();
 
   const item = await db.masterCost.findFirst({
     where: { id },
@@ -200,7 +200,7 @@ export async function getMasterCostDetail(id: string): Promise<MasterCostDetail 
 }
 
 export async function archiveMasterCost(id: string) {
-  const { db, role, userId } = await requireSession();
+  const { db, role, userId } = await requireStaff();
   assertCanEdit(role);
   // Archiving excludes this item's cost live everywhere it's referenced, so it
   // moves affected SKUs' cost — record a COST_ARCHIVED revision for each, in the
@@ -217,7 +217,7 @@ export async function archiveMasterCost(id: string) {
 }
 
 export async function restoreMasterCost(id: string) {
-  const { db, role, userId } = await requireSession();
+  const { db, role, userId } = await requireStaff();
   assertCanEdit(role);
   // Restoring re-includes the cost, moving affected SKUs' cost back — record a
   // COST_RESTORED revision for each in the same transaction as the flip.
@@ -244,7 +244,7 @@ export async function importMasterCostsCsv(
   _prev: ImportResult | undefined,
   formData: FormData,
 ): Promise<ImportResult> {
-  const { db, role, userId, companyId } = await requireSession();
+  const { db, role, userId, companyId } = await requireStaff();
   assertCanEdit(role);
 
   const file = formData.get("file") as File | null;
@@ -291,7 +291,7 @@ export async function searchMasterCosts(input: {
   type?: string;
   archived?: boolean;
 }): Promise<MasterCostListItem[]> {
-  const { db } = await requireSession();
+  const { db } = await requireStaff();
 
   const where: Prisma.MasterCostWhereInput = { archived: input.archived ?? false };
   if (input.q) where.name = { contains: input.q, mode: "insensitive" };

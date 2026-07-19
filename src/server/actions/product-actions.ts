@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireSession, assertCanEdit } from "@/lib/session";
+import { requireStaff, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
   marginHealth,
@@ -26,7 +26,7 @@ import type { Prisma, ProductStatus, ProductHistoryKind } from "@prisma/client";
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-type Db = Awaited<ReturnType<typeof requireSession>>["db"];
+type Db = Awaited<ReturnType<typeof requireStaff>>["db"];
 
 const compInputSchema = z.array(
   z.object({
@@ -129,7 +129,7 @@ export async function createProduct(
   _prev: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const { db, role, userId, companyId } = await requireSession();
+  const { db, role, userId, companyId } = await requireStaff();
   assertCanEdit(role);
 
   const parsed = productPayloadSchema.safeParse(Object.fromEntries(formData));
@@ -170,7 +170,7 @@ export async function updateProduct(
   _prev: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const { db, role, userId } = await requireSession();
+  const { db, role, userId } = await requireStaff();
   assertCanEdit(role);
 
   const id = String(formData.get("id") || "");
@@ -236,7 +236,7 @@ export async function updateProduct(
 }
 
 export async function deleteProduct(id: string) {
-  const { db, role } = await requireSession();
+  const { db, role } = await requireStaff();
   assertCanEdit(role);
   await db.product.deleteMany({ where: { id } });
   revalidatePath("/products");
@@ -276,7 +276,7 @@ export interface ProductBreakdown {
 
 /** Preview payload for a single product — reuses the shared costing engine. */
 export async function getProductBreakdown(id: string): Promise<ProductBreakdown | { ok: false; error: string }> {
-  const { db, companyId } = await requireSession();
+  const { db, companyId } = await requireStaff();
 
   const product = await db.product.findFirst({
     where: { id },
@@ -351,7 +351,7 @@ export interface ProductDraft {
 
 /** Seed the edit form. Legacy (comps-null) products are upgraded to the comps model. */
 export async function getProductDraft(id: string): Promise<ProductDraft | { ok: false; error: string }> {
-  const { db } = await requireSession();
+  const { db } = await requireStaff();
 
   const product = await db.product.findFirst({
     where: { id },
@@ -431,7 +431,7 @@ export interface ProductHistoryResult {
 export async function getProductHistory(
   productId: string,
 ): Promise<ProductHistoryResult | { ok: false; error: string }> {
-  const { db, companyId } = await requireSession();
+  const { db, companyId } = await requireStaff();
 
   const product = await db.product.findFirst({
     where: { id: productId },
@@ -508,7 +508,7 @@ export interface ProductListItem {
 }
 
 export async function searchProducts(input: { q?: string; status?: string }): Promise<ProductListItem[]> {
-  const { db } = await requireSession();
+  const { db } = await requireStaff();
 
   const where: Prisma.ProductWhereInput = {};
   if (input.q) {

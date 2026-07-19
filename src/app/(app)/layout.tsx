@@ -1,4 +1,4 @@
-import { requireSession } from "@/lib/session";
+import { requireStaff } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { Sidebar } from "@/components/sidebar";
 import { SidebarProvider } from "@/components/sidebar-context";
@@ -11,7 +11,7 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { companyId, userName, userEmail, role } = await requireSession().then((s) => ({
+  const { companyId, userName, userEmail, role } = await requireStaff().then((s) => ({
     companyId: s.companyId,
     userName: s.name,
     userEmail: s.email,

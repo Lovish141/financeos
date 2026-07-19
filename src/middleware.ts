@@ -5,7 +5,7 @@ import type { NextRequest } from "next/server";
 // (role, tenant) is enforced server-side in requireSession(). This just keeps
 // unauthenticated users out of the app shell without importing the full auth
 // runtime into the edge middleware.
-const PUBLIC_PATHS = ["/login", "/register"];
+const PUBLIC_PATHS = ["/login", "/register", "/invite"];
 
 const SESSION_COOKIES = [
   "authjs.session-token",
