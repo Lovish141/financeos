@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requireSession, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { SALES_CHANNELS } from "@/lib/csv";
+import { validateCustomerFields } from "@/lib/validation";
 import type { TenantDb } from "@/lib/tenant";
 import type { ActionResult } from "./cost-actions";
 import type { Prisma, SalesChannel } from "@prisma/client";
@@ -28,6 +29,19 @@ function clean(v: string | undefined): string | null {
   return t || null;
 }
 
+// True when another (optionally excluding `id`) customer already uses this name,
+// case-insensitively, within the tenant scope of `db`.
+async function nameTaken(db: TenantDb, name: string, excludeId?: string): Promise<boolean> {
+  const match = await db.customer.findFirst({
+    where: {
+      name: { equals: name, mode: "insensitive" },
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true },
+  });
+  return !!match;
+}
+
 export async function createCustomer(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const { db, role, companyId } = await requireSession();
   assertCanEdit(role);
@@ -36,14 +50,22 @@ export async function createCustomer(_prev: ActionResult, formData: FormData): P
   if (!parsed.success) return { error: parsed.error.errors[0]?.message };
   const data = parsed.data;
 
+  const name = data.name.trim();
+  if (!name) return { error: "Name is required." };
+
+  const fieldError = validateCustomerFields(data);
+  if (fieldError) return { error: fieldError };
+
+  if (await nameTaken(db, name)) return { error: `A customer named “${name}” already exists.` };
+
   await db.customer.create({
     data: {
       companyId,
-      name: data.name.trim(),
+      name,
       email: clean(data.email),
       phone: clean(data.phone),
       channel: data.channel ? (data.channel as SalesChannel) : null,
-      gstin: clean(data.gstin),
+      gstin: clean(data.gstin)?.toUpperCase() ?? null,
       city: clean(data.city),
       notes: clean(data.notes),
     },
@@ -64,17 +86,25 @@ export async function updateCustomer(_prev: ActionResult, formData: FormData): P
   if (!parsed.success) return { error: parsed.error.errors[0]?.message };
   const data = parsed.data;
 
+  const name = data.name.trim();
+  if (!name) return { error: "Name is required." };
+
+  const fieldError = validateCustomerFields(data);
+  if (fieldError) return { error: fieldError };
+
   const existing = await db.customer.findFirst({ where: { id }, select: { id: true } });
   if (!existing) return { error: "Customer not found." };
+
+  if (await nameTaken(db, name, id)) return { error: `A customer named “${name}” already exists.` };
 
   await db.customer.update({
     where: { id },
     data: {
-      name: data.name.trim(),
+      name,
       email: clean(data.email),
       phone: clean(data.phone),
       channel: data.channel ? (data.channel as SalesChannel) : null,
-      gstin: clean(data.gstin),
+      gstin: clean(data.gstin)?.toUpperCase() ?? null,
       city: clean(data.city),
       notes: clean(data.notes),
     },

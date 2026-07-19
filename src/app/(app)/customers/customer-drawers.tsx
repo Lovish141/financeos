@@ -7,6 +7,7 @@ import { Drawer, DrawerBody, DrawerCloseButton, DrawerFooter, DrawerHeader, Draw
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "@/components/toaster";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { validateEmail, validatePhone, validateGstin } from "@/lib/validation";
 import {
   createCustomer,
   updateCustomer,
@@ -173,10 +174,17 @@ function CustomerFormDrawer({
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<"name" | "email" | "phone" | "gstin", string | null>>({
+    name: null,
+    email: null,
+    phone: null,
+    gstin: null,
+  });
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setFieldErrors({ name: null, email: null, phone: null, gstin: null });
     if (mode === "edit" && initial) {
       setName(initial.name);
       setEmail(initial.email ?? "");
@@ -198,7 +206,15 @@ function CustomerFormDrawer({
 
   async function handleSave() {
     setError(null);
-    if (!name.trim()) return setError("Name is required.");
+
+    const errs = {
+      name: name.trim() ? null : "Name is required.",
+      email: validateEmail(email),
+      phone: validatePhone(phone),
+      gstin: validateGstin(gstin),
+    };
+    setFieldErrors(errs);
+    if (errs.name || errs.email || errs.phone || errs.gstin) return;
 
     setSaving(true);
     const fd = new FormData();
@@ -231,16 +247,45 @@ function CustomerFormDrawer({
         <div className="space-y-4">
           <div>
             <label className="label">Customer name</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sharma Traders" autoFocus />
+            <input
+              className={`input ${fieldErrors.name ? "border-risk-500" : ""}`}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (fieldErrors.name) setFieldErrors((p) => ({ ...p, name: null }));
+              }}
+              placeholder="e.g. Sharma Traders"
+              autoFocus
+            />
+            {fieldErrors.name && <p className="mt-1 text-[12px] text-risk-500">{fieldErrors.name}</p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Email (optional)</label>
-              <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" />
+              <input
+                className={`input ${fieldErrors.email ? "border-risk-500" : ""}`}
+                type="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (fieldErrors.email) setFieldErrors((p) => ({ ...p, email: null }));
+                }}
+                placeholder="name@company.com"
+              />
+              {fieldErrors.email && <p className="mt-1 text-[12px] text-risk-500">{fieldErrors.email}</p>}
             </div>
             <div>
               <label className="label">Phone (optional)</label>
-              <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91…" />
+              <input
+                className={`input ${fieldErrors.phone ? "border-risk-500" : ""}`}
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  if (fieldErrors.phone) setFieldErrors((p) => ({ ...p, phone: null }));
+                }}
+                placeholder="+91…"
+              />
+              {fieldErrors.phone && <p className="mt-1 text-[12px] text-risk-500">{fieldErrors.phone}</p>}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -259,7 +304,16 @@ function CustomerFormDrawer({
           </div>
           <div>
             <label className="label">GSTIN (optional)</label>
-            <input className="input" value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="27AAAAA0000A1Z5" />
+            <input
+              className={`input ${fieldErrors.gstin ? "border-risk-500" : ""}`}
+              value={gstin}
+              onChange={(e) => {
+                setGstin(e.target.value);
+                if (fieldErrors.gstin) setFieldErrors((p) => ({ ...p, gstin: null }));
+              }}
+              placeholder="27AAAAA0000A1Z5"
+            />
+            {fieldErrors.gstin && <p className="mt-1 text-[12px] text-risk-500">{fieldErrors.gstin}</p>}
           </div>
           <div>
             <label className="label">Notes (optional)</label>
@@ -320,10 +374,10 @@ function CustomerPreviewDrawer({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             {data && (data.channel || data.city) && (
-              <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-500">
-                {data.channel && <span>{CHANNEL_LABEL[data.channel] ?? data.channel}</span>}
-                {data.channel && data.city && <span>·</span>}
-                {data.city && <span>{data.city}</span>}
+              <div className="mb-2 flex min-w-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-500">
+                {data.channel && <span className="shrink-0">{CHANNEL_LABEL[data.channel] ?? data.channel}</span>}
+                {data.channel && data.city && <span className="shrink-0">·</span>}
+                {data.city && <span className="min-w-0 truncate" title={data.city}>{data.city}</span>}
               </div>
             )}
             <h2 className="truncate text-[22px] font-extrabold tracking-[-0.02em] text-ink-900" title={data?.name}>{data?.name ?? "Loading…"}</h2>

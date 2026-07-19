@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Coins, Boxes, Package, Search as SearchIcon } from "lucide-react";
+import { Coins, Boxes, Package, Users, Search as SearchIcon } from "lucide-react";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, Card, Badge, EmptyState } from "@/components/ui";
@@ -21,13 +21,13 @@ export default async function SearchPage({
   if (!query) {
     return (
       <div>
-        <PageHeader eyebrow="Search" title="Search" description="Find any master cost, template, or product across your workspace." />
-        <EmptyState icon={<SearchIcon className="h-10 w-10" />} title="Type a query" description="Use the search bar above to look across all three cost layers." />
+        <PageHeader eyebrow="Search" title="Search" description="Find any master cost, template, product, or customer across your workspace." />
+        <EmptyState icon={<SearchIcon className="h-10 w-10" />} title="Type a query" description="Use the search bar above to look across costs, templates, products, and customers." />
       </div>
     );
   }
 
-  const [costs, templates, products] = await Promise.all([
+  const [costs, templates, products, customers] = await Promise.all([
     db.masterCost.findMany({
       where: { name: { contains: query, mode: "insensitive" } },
       take: 8,
@@ -46,19 +46,33 @@ export default async function SearchPage({
         templateVersion: true, template: { select: { name: true, category: true } },
       },
     }),
+    db.customer.findMany({
+      where: {
+        archived: false,
+        OR: [
+          { name: { contains: query, mode: "insensitive" } },
+          { email: { contains: query, mode: "insensitive" } },
+          { city: { contains: query, mode: "insensitive" } },
+          { gstin: { contains: query, mode: "insensitive" } },
+        ],
+      },
+      take: 8,
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, email: true, city: true },
+    }),
   ]);
 
   // Margin resolves live from the price book (no cached column).
   const productCosts = await computeProductsLive(db, products);
 
-  const total = costs.length + templates.length + products.length;
+  const total = costs.length + templates.length + products.length + customers.length;
 
   return (
     <div>
       <PageHeader eyebrow="Search" title={`Results for “${query}”`} description={`${total} match${total === 1 ? "" : "es"} across your workspace.`} />
 
       {total === 0 ? (
-        <EmptyState icon={<SearchIcon className="h-10 w-10" />} title="No matches" description="Try a different name or SKU." />
+        <EmptyState icon={<SearchIcon className="h-10 w-10" />} title="No matches" description="Try a different name, SKU, or customer." />
       ) : (
         <div className="space-y-6">
           {costs.length > 0 && (
@@ -90,6 +104,16 @@ export default async function SearchPage({
                     <span className="ml-2 text-xs text-ink-400">{p.sku}</span>
                   </span>
                   <span className="shrink-0 text-sm text-ink-500">{formatPercent(productCosts.get(p.id)?.grossMarginPct ?? 0)} margin</span>
+                </Link>
+              ))}
+            </Section>
+          )}
+          {customers.length > 0 && (
+            <Section title="Customers" icon={<Users className="h-4 w-4" />}>
+              {customers.map((c) => (
+                <Link key={c.id} href={`/customers?q=${encodeURIComponent(c.name)}`} className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3 last:border-0 hover:bg-ink-50/60">
+                  <span className="min-w-0 truncate font-medium text-ink-900" title={c.name}>{c.name}</span>
+                  {(c.city || c.email) && <span className="shrink-0 truncate text-sm text-ink-500" title={c.email ?? c.city ?? ""}>{c.city ?? c.email}</span>}
                 </Link>
               ))}
             </Section>

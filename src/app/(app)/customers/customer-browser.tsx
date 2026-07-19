@@ -109,7 +109,9 @@ export function CustomerBrowser({
           description={
             q
               ? "Try a different search term."
-              : "Add the customers you sell to — then link them when recording sales."
+              : archived
+                ? "Customers you archive show up here. You can restore them anytime."
+                : "Add the customers you sell to — then link them when recording sales."
           }
           action={editable && !archived && !q && <NewCustomerButton />}
         />
@@ -138,7 +140,7 @@ export function CustomerBrowser({
                 <CustomerRowOpen id={c.id} title={c.name} className="truncate text-left text-[14px] font-semibold text-ink-900 hover:text-brand-700">
                   {c.name}
                 </CustomerRowOpen>
-                {c.city && <span className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400">{c.city}</span>}
+                {c.city && <span className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400" title={c.city}>{c.city}</span>}
               </div>
               <div className="min-w-0 truncate text-[12.5px] text-ink-600" title={c.email ?? c.phone ?? ""}>
                 {c.email ?? c.phone ?? <span className="text-ink-300">—</span>}
