@@ -136,8 +136,14 @@ export function SalesDrawers({ products, customers }: { products: ProductOption[
   );
 }
 
+// Local calendar date (YYYY-MM-DD). Using toISOString() here would emit the UTC
+// date, which is a day behind for users in timezones ahead of UTC (e.g. IST).
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 // ---- create / edit ---------------------------------------------------------
@@ -217,6 +223,7 @@ function SaleFormDrawer({
     if (!(qtyNum > 0)) return setError("Quantity must be greater than 0.");
     if (!(priceNum >= 0)) return setError("Unit price must be 0 or more.");
     if (!soldAt) return setError("Sale date is required.");
+    if (soldAt > todayISO()) return setError("Sale date can't be in the future.");
 
     setSaving(true);
     const fd = new FormData();
@@ -270,7 +277,7 @@ function SaleFormDrawer({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Sale date</label>
-              <input className="input" type="date" value={soldAt} onChange={(e) => setSoldAt(e.target.value)} />
+              <input className="input" type="date" max={todayISO()} value={soldAt} onChange={(e) => setSoldAt(e.target.value)} />
             </div>
             <div>
               <label className="label">Channel (optional)</label>
@@ -491,12 +498,24 @@ function SaleImportDrawer({ onClose, onImported }: { onClose: () => void; onImpo
               </p>
             </div>
 
-            {result && (result.imported > 0 || result.errors.length > 0) && (
+            {result && (result.imported > 0 || result.errors.length > 0 || (result.warnings?.length ?? 0) > 0) && (
               <div className="animate-fade-up space-y-3">
                 {result.imported > 0 && (
                   <div className="flex items-center gap-2 rounded-[10px] px-4 py-3 text-[13px] font-medium" style={{ background: "oklch(0.955 0.025 168)", color: GREEN }}>
                     <CheckCircle2 className="h-4 w-4 shrink-0" />
                     Imported {result.imported} sale{result.imported > 1 ? "s" : ""}.
+                  </div>
+                )}
+                {result.warnings && result.warnings.length > 0 && (
+                  <div className="rounded-[10px] px-4 py-3 text-[13px]" style={{ background: "oklch(0.97 0.04 80)", color: "oklch(0.45 0.09 65)" }}>
+                    <div className="mb-1 flex items-center gap-2 font-semibold">
+                      <AlertCircle className="h-4 w-4 shrink-0" /> {result.warnings.length} row(s) imported with notes
+                    </div>
+                    <ul className="ml-6 list-disc space-y-0.5">
+                      {result.warnings.map((w, i) => (
+                        <li key={i}>Line {w.line}: {w.error}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
                 {result.errors.length > 0 && (

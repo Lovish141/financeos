@@ -114,6 +114,9 @@ export function parseMasterCostCsv(text: string): CsvParseOutcome {
       errors.push({ line, error: `Unit "${unit}" isn't valid for ${TYPE_LABELS[type]}.` });
       continue;
     }
+    // A blank required cost is an omission, not a ₹0 cost — reject rather than
+    // silently recording zero. An explicit "0" is still allowed.
+    if (!costStr) { errors.push({ line, error: "Missing cost." }); continue; }
     const cost = Number(costStr);
     if (!Number.isFinite(cost) || cost < 0) {
       errors.push({ line, error: `Invalid cost "${costStr}".` });
@@ -152,6 +155,7 @@ export function parseChannel(raw: string): SalesChannelValue | null | undefined 
 }
 
 export interface ParsedSaleRow {
+  line: number; // 1-based source line (header = line 1) for accurate reporting
   sku: string;
   quantity: number;
   unitPrice: number;
@@ -164,6 +168,16 @@ export interface SalesCsvOutcome {
   valid: ParsedSaleRow[];
   errors: { line: number; error: string }[];
   fatal?: string;
+}
+
+/**
+ * A recorded sale can't have happened in the future — this module is explicitly
+ * "Realized Transactions". A 24h grace absorbs timezone skew (a user ahead of UTC
+ * entering "today" as local midnight resolves to a UTC instant slightly ahead of
+ * the server clock) while still rejecting genuinely future dates.
+ */
+export function isFutureDate(d: Date, now: Date = new Date()): boolean {
+  return d.getTime() > now.getTime() + 24 * 60 * 60 * 1000;
 }
 
 /** Parse a date cell — accepts YYYY-MM-DD, YYYY/MM/DD, or DD-MM-YYYY / DD/MM/YYYY. */
@@ -191,7 +205,7 @@ export function parseSaleDate(raw: string): Date | null {
  * the action) plus per-line errors (1-based, header = line 1). Valid rows still
  * import even when others fail (mirrors Module 1 acceptance).
  */
-export function parseSalesCsv(text: string): SalesCsvOutcome {
+export function parseSalesCsv(text: string, now: Date = new Date()): SalesCsvOutcome {
   const rows = parseCsv(text);
   if (rows.length < 2) {
     return { valid: [], errors: [], fatal: "File has no data rows. Expected a header row plus at least one data row." };
@@ -230,25 +244,34 @@ export function parseSalesCsv(text: string): SalesCsvOutcome {
     const customer = iCustomer >= 0 ? (cells[iCustomer] ?? "").trim() : "";
 
     if (!sku) { errors.push({ line, error: "Missing SKU." }); continue; }
+    if (!qtyStr) { errors.push({ line, error: "Missing quantity." }); continue; }
     const quantity = Number(qtyStr);
     if (!Number.isFinite(quantity) || quantity <= 0) {
       errors.push({ line, error: `Invalid quantity "${qtyStr}".` });
       continue;
     }
+    // A blank unit_price is a required-field omission, not a ₹0 sale — reject it
+    // rather than silently recording zero revenue. An explicit "0" is still allowed.
+    if (!priceStr) { errors.push({ line, error: "Missing unit price." }); continue; }
     const unitPrice = Number(priceStr);
     if (!Number.isFinite(unitPrice) || unitPrice < 0) {
       errors.push({ line, error: `Invalid unit price "${priceStr}".` });
       continue;
     }
+    if (!dateStr) { errors.push({ line, error: "Missing date." }); continue; }
     const soldAt = parseSaleDate(dateStr);
     if (!soldAt) { errors.push({ line, error: `Invalid date "${dateStr}". Use YYYY-MM-DD.` }); continue; }
+    if (isFutureDate(soldAt, now)) {
+      errors.push({ line, error: `Date "${dateStr}" is in the future — sales must be realized (past-dated).` });
+      continue;
+    }
     const channel = parseChannel(channelStr);
     if (channel === undefined) {
       errors.push({ line, error: `Invalid channel "${channelStr}". Use retail, wholesale, distributor, export, online, or other.` });
       continue;
     }
 
-    valid.push({ sku, quantity, unitPrice, soldAt, channel, customer: customer || null });
+    valid.push({ line, sku, quantity, unitPrice, soldAt, channel, customer: customer || null });
   }
 
   return { valid, errors };

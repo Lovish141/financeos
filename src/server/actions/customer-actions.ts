@@ -132,38 +132,41 @@ export async function restoreCustomer(id: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Find-or-create by name — used by the sales CSV import + inline "add" flow so a
-// customer named on a sale row is linked to a master record (created if new).
-// Tenant scoping is applied by the passed `db`.
+// Match by name — used by the sales CSV import to link a sale row to an existing
+// customer master record. It deliberately does NOT create customers: a typo in a
+// spreadsheet must never silently pollute the master list. Unmatched or ambiguous
+// (duplicate-name) rows are surfaced by the caller. Tenant scoping via `db`.
 // ---------------------------------------------------------------------------
 
-export async function resolveCustomerIds(
-  db: TenantDb,
-  companyId: string,
-  names: string[],
-): Promise<Map<string, string>> {
-  const wanted = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
-  if (wanted.length === 0) return new Map();
+export interface CustomerNameMatch {
+  byName: Map<string, string>; // lowercased name -> id, only for unambiguous matches
+  ambiguous: Set<string>;      // lowercased names matching more than one customer
+}
+
+export async function matchCustomerIds(db: TenantDb, names: string[]): Promise<CustomerNameMatch> {
+  const wanted = [...new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean))];
+  if (wanted.length === 0) return { byName: new Map(), ambiguous: new Set() };
 
   const existing = await db.customer.findMany({
     where: { name: { in: wanted, mode: "insensitive" } },
     select: { id: true, name: true },
   });
-  const byLower = new Map(existing.map((c) => [c.name.toLowerCase(), c.id]));
 
-  const toCreate = wanted.filter((n) => !byLower.has(n.toLowerCase()));
-  for (const name of toCreate) {
-    const created = await db.customer.create({ data: { companyId, name } });
-    byLower.set(name.toLowerCase(), created.id);
+  const idsByName = new Map<string, string[]>();
+  for (const c of existing) {
+    const key = c.name.toLowerCase();
+    const list = idsByName.get(key) ?? [];
+    list.push(c.id);
+    idsByName.set(key, list);
   }
 
-  // Return keyed by the original (trimmed) name for the caller's lookup.
-  const out = new Map<string, string>();
-  for (const n of wanted) {
-    const id = byLower.get(n.toLowerCase());
-    if (id) out.set(n, id);
+  const byName = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  for (const [key, ids] of idsByName) {
+    if (ids.length === 1) byName.set(key, ids[0]);
+    else ambiguous.add(key);
   }
-  return out;
+  return { byName, ambiguous };
 }
 
 // ---------------------------------------------------------------------------

@@ -248,7 +248,8 @@ export async function importMasterCostsCsv(
   assertCanEdit(role);
 
   const file = formData.get("file") as File | null;
-  if (!file || file.size === 0) return { imported: 0, errors: [{ line: 0, error: "No file uploaded." }] };
+  if (!file) return { imported: 0, errors: [{ line: 0, error: "No file uploaded." }] };
+  if (file.size === 0) return { imported: 0, errors: [{ line: 0, error: "The uploaded file is empty." }] };
 
   const { valid, errors, fatal } = parseMasterCostCsv(await file.text());
   if (fatal) return { imported: 0, errors: [{ line: 1, error: fatal }] };

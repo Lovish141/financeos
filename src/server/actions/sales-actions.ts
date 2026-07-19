@@ -5,8 +5,8 @@ import { z } from "zod";
 import { requireSession, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { computeProductsLive } from "@/server/costing-service";
-import { parseSalesCsv, SALES_CHANNELS } from "@/lib/csv";
-import { resolveCustomerIds } from "./customer-actions";
+import { parseSalesCsv, SALES_CHANNELS, isFutureDate } from "@/lib/csv";
+import { matchCustomerIds } from "./customer-actions";
 import type { ActionResult } from "./cost-actions";
 import type { Prisma, SalesChannel } from "@prisma/client";
 
@@ -51,6 +51,7 @@ export async function createSale(_prev: ActionResult, formData: FormData): Promi
 
   const soldAt = toDate(data.soldAt);
   if (!soldAt) return { error: "Invalid sale date." };
+  if (isFutureDate(soldAt)) return { error: "Sale date can't be in the future." };
 
   // Confirm the product belongs to this tenant (tenantDb scopes the query).
   const product = await db.product.findFirst({ where: { id: data.productId }, select: { id: true } });
@@ -89,6 +90,7 @@ export async function updateSale(_prev: ActionResult, formData: FormData): Promi
 
   const soldAt = toDate(data.soldAt);
   if (!soldAt) return { error: "Invalid sale date." };
+  if (isFutureDate(soldAt)) return { error: "Sale date can't be in the future." };
 
   const existing = await db.sale.findFirst({ where: { id }, select: { id: true } });
   if (!existing) return { error: "Sale not found." };
@@ -133,6 +135,9 @@ export async function deleteSale(id: string) {
 export interface ImportResult {
   imported: number;
   errors: { line: number; error: string }[];
+  // Non-fatal notes: the sale imported, but something needs the user's attention
+  // (e.g. a named customer wasn't found or was ambiguous, so it was left unlinked).
+  warnings?: { line: number; error: string }[];
   ok?: boolean;
 }
 
@@ -144,7 +149,8 @@ export async function importSalesCsv(
   assertCanEdit(role);
 
   const file = formData.get("file") as File | null;
-  if (!file || file.size === 0) return { imported: 0, errors: [{ line: 0, error: "No file uploaded." }] };
+  if (!file) return { imported: 0, errors: [{ line: 0, error: "No file uploaded." }] };
+  if (file.size === 0) return { imported: 0, errors: [{ line: 0, error: "The uploaded file is empty." }] };
 
   const { valid, errors, fatal } = parseSalesCsv(await file.text());
   if (fatal) return { imported: 0, errors: [{ line: 1, error: fatal }] };
@@ -158,22 +164,36 @@ export async function importSalesCsv(
   });
   const bySku = new Map(products.map((p) => [p.sku.toLowerCase(), p.id]));
 
-  // Find-or-create customers named on the rows so each sale links to master data.
-  const customerIds = await resolveCustomerIds(db, companyId, valid.map((v) => v.customer ?? "").filter(Boolean) as string[]);
+  // Match named customers to EXISTING master records only — never auto-create, so
+  // a stray name can't pollute the customer list. Unmatched/ambiguous names still
+  // import the sale (unlinked) and are surfaced as warnings.
+  const { byName, ambiguous } = await matchCustomerIds(db, valid.map((v) => v.customer ?? ""));
 
   const toInsert: { productId: string; customerId: string | null; quantity: number; unitPrice: number; soldAt: Date; channel: SalesChannel | null }[] = [];
   const skuErrors: { line: number; error: string }[] = [];
-  valid.forEach((v, i) => {
+  const warnings: { line: number; error: string }[] = [];
+  valid.forEach((v) => {
     const productId = bySku.get(v.sku.toLowerCase());
     if (!productId) {
-      // Recover the original line number: valid rows are in file order but skip
-      // failed ones, so we can't map 1:1. Report by SKU instead.
-      skuErrors.push({ line: i + 2, error: `No product with SKU "${v.sku}".` });
+      skuErrors.push({ line: v.line, error: `No product with SKU "${v.sku}".` });
       return;
     }
+
+    let customerId: string | null = null;
+    if (v.customer) {
+      const key = v.customer.trim().toLowerCase();
+      if (ambiguous.has(key)) {
+        warnings.push({ line: v.line, error: `Customer "${v.customer}" matches more than one record — sale imported without a customer link.` });
+      } else if (byName.has(key)) {
+        customerId = byName.get(key)!;
+      } else {
+        warnings.push({ line: v.line, error: `Customer "${v.customer}" not found — sale imported without a customer link.` });
+      }
+    }
+
     toInsert.push({
       productId,
-      customerId: v.customer ? customerIds.get(v.customer.trim()) ?? null : null,
+      customerId,
       quantity: v.quantity,
       unitPrice: v.unitPrice,
       soldAt: v.soldAt,
@@ -192,8 +212,12 @@ export async function importSalesCsv(
   revalidatePath("/sales");
   revalidatePath("/products");
   revalidatePath("/dashboard");
-  revalidatePath("/customers");
-  return { imported: toInsert.length, errors: [...errors, ...skuErrors].sort((a, b) => a.line - b.line), ok: true };
+  return {
+    imported: toInsert.length,
+    errors: [...errors, ...skuErrors].sort((a, b) => a.line - b.line),
+    warnings: warnings.sort((a, b) => a.line - b.line),
+    ok: true,
+  };
 }
 
 // ---------------------------------------------------------------------------
