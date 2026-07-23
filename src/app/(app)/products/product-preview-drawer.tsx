@@ -67,7 +67,13 @@ export function ProductPreviewDrawer({
             <h2 className="truncate text-[22px] font-extrabold tracking-[-0.02em] text-ink-900" title={data?.name}>
               {data?.name ?? (loading ? "Loading…" : "Product")}
             </h2>
-            {data && <div className="mt-1 truncate font-mono text-[11px] text-ink-400" title={data.sku}>{data.sku}</div>}
+            {data && (
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-ink-400">
+                <span className="truncate" title={data.sku}>{data.sku}</span>
+                {data.productCode && <span className="truncate" title={`Code ${data.productCode}`}>· {data.productCode}</span>}
+                {data.seriesName && <span className="truncate" title={`Series ${data.seriesName}`}>· {data.seriesName}</span>}
+              </div>
+            )}
           </div>
           <DrawerCloseButton onClose={onClose} />
         </div>

@@ -55,6 +55,8 @@ export function ProductFormDrawer({
   onSaved: () => void;
 }) {
   const [name, setName] = useState("");
+  const [productCode, setProductCode] = useState("");
+  const [seriesName, setSeriesName] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [price, setPrice] = useState("");
   const [status, setStatus] = useState("ACTIVE");
@@ -88,6 +90,8 @@ export function ProductFormDrawer({
     if (mode === "create") {
       const firstTid = templates[0]?.id ?? "";
       setName("");
+      setProductCode("");
+      setSeriesName("");
       setPrice("");
       setStatus("ACTIVE");
       setTemplateId(firstTid);
@@ -103,6 +107,8 @@ export function ProductFormDrawer({
         }
         const d = res as ProductDraft;
         setName(d.name);
+        setProductCode(d.productCode ?? "");
+        setSeriesName(d.seriesName ?? "");
         setPrice(String(d.sellingPrice));
         setStatus(d.status);
         setTemplateId(d.templateId ?? "");
@@ -155,6 +161,8 @@ export function ProductFormDrawer({
     const fd = new FormData();
     if (mode === "edit" && productId) fd.set("id", productId);
     fd.set("name", name.trim());
+    fd.set("productCode", productCode.trim());
+    fd.set("seriesName", seriesName.trim());
     fd.set("templateId", templateId);
     fd.set("sellingPrice", String(priceNum));
     fd.set("status", status);
@@ -184,6 +192,17 @@ export function ProductFormDrawer({
             <div>
               <label className="label">Product name</label>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Premium Basin Mixer" autoFocus />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Product code</label>
+                <input className="input" value={productCode} onChange={(e) => setProductCode(e.target.value)} placeholder="e.g. BM-2043" />
+              </div>
+              <div>
+                <label className="label">Series name</label>
+                <input className="input" value={seriesName} onChange={(e) => setSeriesName(e.target.value)} placeholder="e.g. Aqua Series" />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

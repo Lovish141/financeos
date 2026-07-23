@@ -180,7 +180,14 @@ export function SalesBrowser({
                     </button>
                     <div className="text-right font-mono text-[13px] text-ink-700">{o.itemCount.toLocaleString("en-IN")}</div>
                     <div className="text-right font-mono text-[13px] text-ink-700">{o.quantity.toLocaleString("en-IN")}</div>
-                    <div className="text-right font-mono text-[13px] font-semibold text-ink-900">{formatMoney(o.revenue, currency)}</div>
+                    <div className="flex flex-col items-end">
+                      <span className="font-mono text-[13px] font-semibold text-ink-900">{formatMoney(o.revenue, currency)}</span>
+                      {o.listSubtotal > o.revenue + 0.005 && (
+                        <span className="font-mono text-[10px] text-ink-400" title={`List ${formatMoney(o.listSubtotal, currency)} · discounts ${formatMoney(o.lineDiscountTotal + o.orderDiscount, currency)}`}>
+                          <span className="line-through">{formatMoney(o.listSubtotal, currency)}</span>
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2 text-[12.5px] text-ink-600">
                       {o.channel ? (
                         <>
@@ -223,7 +230,14 @@ export function SalesBrowser({
                             <span className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400">{it.sku}</span>
                           </div>
                           <div className="text-right font-mono text-[12px] text-ink-500">{it.quantity.toLocaleString("en-IN")} ×</div>
-                          <div className="text-right font-mono text-[12px] text-ink-500">{formatMoney(it.unitPrice, currency)}</div>
+                          <div className="text-right font-mono text-[12px] text-ink-500">
+                            {formatMoney(it.unitPrice, currency)}
+                            {it.discountType && it.discountValue > 0 && (
+                              <span className="ml-1 text-[10px]" style={{ color: "oklch(0.55 0.14 40)" }}>
+                                −{it.discountType === "PERCENT" ? `${it.discountValue}%` : formatMoney(it.discountValue, currency)}
+                              </span>
+                            )}
+                          </div>
                           <div className="text-right font-mono text-[12.5px] font-semibold text-ink-800">{formatMoney(it.revenue, currency)}</div>
                           <span />
                           <span />

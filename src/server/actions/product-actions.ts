@@ -38,10 +38,18 @@ const compInputSchema = z.array(
 const productPayloadSchema = z.object({
   name: z.string().min(1, "Name is required"),
   sku: z.string().optional(),
+  productCode: z.string().optional(),
+  seriesName: z.string().optional(),
   templateId: z.string().optional(), // "" / undefined => Empty Template
   sellingPrice: z.coerce.number().positive("Selling price must be greater than 0"),
   status: z.enum(["DRAFT", "ACTIVE", "DISCONTINUED"]).optional(),
 });
+
+/** Trim an optional free-text field to null when blank. */
+function cleanField(v: string | undefined): string | null {
+  const t = (v ?? "").trim();
+  return t || null;
+}
 
 /** Parse the JSON `comps` field the drawer submits. */
 function parseComps(formData: FormData) {
@@ -150,6 +158,8 @@ export async function createProduct(
         companyId,
         name: data.name,
         sku,
+        productCode: cleanField(data.productCode),
+        seriesName: cleanField(data.seriesName),
         templateId: built.templateId,
         templateVersionId: built.templateVersionId,
         comps: built.comps as object,
@@ -186,6 +196,8 @@ export async function updateProduct(
     select: {
       id: true,
       name: true,
+      productCode: true,
+      seriesName: true,
       sellingPrice: true,
       status: true,
       comps: true,
@@ -198,8 +210,13 @@ export async function updateProduct(
   const built = await buildComps(db, data.templateId || undefined, compsParsed.data);
   if ("error" in built) return { error: built.error };
 
+  const productCode = cleanField(data.productCode);
+  const seriesName = cleanField(data.seriesName);
+
   const updateData = {
     name: data.name,
+    productCode,
+    seriesName,
     templateId: built.templateId,
     templateVersionId: built.templateVersionId,
     comps: built.comps as object,
@@ -211,6 +228,8 @@ export async function updateProduct(
   // same guard shape as updateMasterCost's `priceChanged`. (SKU isn't editable.)
   const changed =
     existing.name !== data.name ||
+    existing.productCode !== productCode ||
+    existing.seriesName !== seriesName ||
     existing.sellingPrice !== data.sellingPrice ||
     (data.status !== undefined && existing.status !== data.status) ||
     existing.templateId !== built.templateId ||
@@ -254,6 +273,8 @@ export interface ProductBreakdown {
   id: string;
   name: string;
   sku: string;
+  productCode: string | null;
+  seriesName: string | null;
   status: string;
   templateName: string;
   category: string | null;
@@ -303,6 +324,8 @@ export async function getProductBreakdown(id: string): Promise<ProductBreakdown 
     id: product.id,
     name: product.name,
     sku: product.sku,
+    productCode: product.productCode,
+    seriesName: product.seriesName,
     status: product.status,
     templateName: product.template?.name ?? "Custom",
     category: product.template?.category ?? null,
@@ -343,6 +366,8 @@ export interface ProductDraft {
   error?: string;
   id: string;
   name: string;
+  productCode: string | null;
+  seriesName: string | null;
   sellingPrice: number;
   status: string;
   templateId: string | null;
@@ -379,6 +404,8 @@ export async function getProductDraft(id: string): Promise<ProductDraft | { ok: 
     ok: true,
     id: product.id,
     name: product.name,
+    productCode: product.productCode,
+    seriesName: product.seriesName,
     sellingPrice: product.sellingPrice,
     status: product.status,
     templateId: product.templateId ?? null,
@@ -492,6 +519,8 @@ export interface ProductListItem {
   id: string;
   name: string;
   sku: string;
+  productCode: string | null;
+  seriesName: string | null;
   status: ProductStatus;
   totalCost: number;
   sellingPrice: number;
@@ -502,9 +531,11 @@ export interface ProductListItem {
   costHistory: number[];
   revisionCount: number;
   // Realized-sales rollup (Module 8) — units sold and true profit contribution
-  // (realized revenue − live cost × units). Zero when a product has no sales.
+  // (realized NET revenue − live cost × units). Zero when a product has no sales.
   unitsSold: number;
-  totalProfit: number;
+  totalProfit: number;      // realized net profit
+  realizedMarginPct: number; // realized (post-discount) margin %
+  listMarginPct: number;     // margin % at list price (pre-discount) — secondary comparison
 }
 
 export async function searchProducts(input: { q?: string; status?: string }): Promise<ProductListItem[]> {
@@ -515,6 +546,8 @@ export async function searchProducts(input: { q?: string; status?: string }): Pr
     where.OR = [
       { name: { contains: input.q, mode: "insensitive" } },
       { sku: { contains: input.q, mode: "insensitive" } },
+      { productCode: { contains: input.q, mode: "insensitive" } },
+      { seriesName: { contains: input.q, mode: "insensitive" } },
     ];
   }
   if (input.status && input.status !== "") where.status = input.status as ProductStatus;
@@ -542,12 +575,16 @@ export async function searchProducts(input: { q?: string; status?: string }): Pr
       const c = costs.get(p.id)!;
       const s = sales.get(p.id);
       const unitsSold = s?.unitsSold ?? 0;
-      // Realized profit: actual revenue minus live cost applied to units sold.
-      const totalProfit = (s?.revenue ?? 0) - c.totalCost * unitsSold;
+      const realizedCost = c.totalCost * unitsSold;
+      // Realized profit: net (post-discount) revenue minus live cost × units sold.
+      const totalProfit = (s?.revenue ?? 0) - realizedCost;
+      const listProfit = (s?.listRevenue ?? 0) - realizedCost;
       return {
         id: p.id,
         name: p.name,
         sku: p.sku,
+        productCode: p.productCode,
+        seriesName: p.seriesName,
         status: p.status,
         totalCost: c.totalCost,
         sellingPrice: p.sellingPrice,
@@ -559,6 +596,8 @@ export async function searchProducts(input: { q?: string; status?: string }): Pr
         revisionCount: p._count.history,
         unitsSold,
         totalProfit,
+        realizedMarginPct: (s?.revenue ?? 0) > 0 ? (totalProfit / (s?.revenue ?? 1)) * 100 : 0,
+        listMarginPct: (s?.listRevenue ?? 0) > 0 ? (listProfit / (s?.listRevenue ?? 1)) * 100 : 0,
       };
     })
     .sort((a, b) => b.grossMarginPct - a.grossMarginPct);

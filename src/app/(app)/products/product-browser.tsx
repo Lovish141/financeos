@@ -10,7 +10,7 @@ import { deleteProduct, searchProducts, type ProductListItem } from "@/server/ac
 import { NewProductButton, ProductRowOpen, ProductEditButton, onProductsChanged } from "./product-drawers";
 import { ProductHistoryCell } from "./product-history-cell";
 
-const GRID = "1.8fr 0.9fr 0.7fr 0.7fr 1fr 0.6fr 0.7fr 0.85fr 74px";
+const GRID = "1.5fr 0.8fr 0.7fr 0.75fr 0.6fr 0.6fr 0.9fr 0.5fr 0.6fr 0.75fr 64px";
 
 const STATUS_TABS: { value: string; label: string }[] = [
   { value: "", label: "All" },
@@ -131,6 +131,8 @@ export function ProductBrowser({
           >
             <span>Product</span>
             <span>Template</span>
+            <span>Code</span>
+            <span>Series</span>
             <span className="text-right">Cost</span>
             <span className="text-right">Price</span>
             <span className="text-right">Margin</span>
@@ -161,6 +163,12 @@ export function ProductBrowser({
                   </span>
                 </ProductRowOpen>
                 <div className="truncate text-[12.5px] font-medium text-ink-600" title={p.templateName ?? "Custom"}>{p.templateName ?? "Custom"}</div>
+                <div className="truncate font-mono text-[12px] text-ink-600" title={p.productCode ?? undefined}>
+                  {p.productCode ?? <span className="text-ink-300">—</span>}
+                </div>
+                <div className="truncate text-[12.5px] text-ink-600" title={p.seriesName ?? undefined}>
+                  {p.seriesName ?? <span className="text-ink-300">—</span>}
+                </div>
                 <div className="text-right font-mono text-[13px] text-ink-600">{formatMoney(p.totalCost, currency)}</div>
                 <div className="text-right font-mono text-[13px] font-semibold text-ink-800">{formatMoney(p.sellingPrice, currency)}</div>
                 <div className="flex flex-col items-end gap-[5px]">
@@ -176,11 +184,24 @@ export function ProductBrowser({
                 <div className="text-right font-mono text-[13px] text-ink-600">
                   {p.unitsSold > 0 ? p.unitsSold.toLocaleString("en-IN") : <span className="text-ink-300">—</span>}
                 </div>
-                <div
-                  className="text-right font-mono text-[13px] font-semibold"
-                  style={{ color: p.unitsSold === 0 ? "oklch(0.72 0.01 260)" : p.totalProfit >= 0 ? "oklch(0.46 0.08 168)" : "oklch(0.55 0.14 40)" }}
-                >
-                  {p.unitsSold > 0 ? formatMoney(p.totalProfit, currency) : "—"}
+                <div className="flex flex-col items-end">
+                  <span
+                    className="font-mono text-[13px] font-semibold"
+                    style={{ color: p.unitsSold === 0 ? "oklch(0.72 0.01 260)" : p.totalProfit >= 0 ? "oklch(0.46 0.08 168)" : "oklch(0.55 0.14 40)" }}
+                  >
+                    {p.unitsSold > 0 ? formatMoney(p.totalProfit, currency) : "—"}
+                  </span>
+                  {p.unitsSold > 0 && (
+                    <span
+                      className="font-mono text-[10px] text-ink-400"
+                      title={`Realized (net) margin ${formatPercent(p.realizedMarginPct)} · at list price ${formatPercent(p.listMarginPct)}`}
+                    >
+                      {formatPercent(p.realizedMarginPct)}
+                      {Math.abs(p.listMarginPct - p.realizedMarginPct) >= 0.1 && (
+                        <span className="text-ink-300"> · list {formatPercent(p.listMarginPct)}</span>
+                      )}
+                    </span>
+                  )}
                 </div>
                 <div className="flex justify-end gap-1.5">
                   {editable && <ProductEditButton id={p.id} />}
