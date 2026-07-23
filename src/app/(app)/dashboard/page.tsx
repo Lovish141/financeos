@@ -46,10 +46,23 @@ export default async function DashboardPage() {
   const topContributor = profitRows.find((p) => p.unitsSold > 0) ?? null;
   const totalRealizedProfit = profitRows.reduce((s, p) => s + (p.unitsSold > 0 ? p.totalProfit : 0), 0);
 
+  // Realized (post-discount) margin per product, for the at-risk flag + display.
+  const realizedByProduct = new Map(profitRows.map((r) => [r.id, r]));
+
+  // Portfolio realized vs list margin (sales-weighted, net of discounts). Null
+  // when nothing has sold yet.
+  const realizedRevenueTotal = profitRows.reduce((s, p) => s + p.revenue, 0);
+  const listRevenueTotal = profitRows.reduce((s, p) => s + p.listRevenue, 0);
+  const realizedCostTotal = profitRows.reduce((s, p) => s + p.totalCost, 0);
+  const portfolioRealizedMargin = realizedRevenueTotal > 0 ? ((realizedRevenueTotal - realizedCostTotal) / realizedRevenueTotal) * 100 : null;
+  const portfolioListMargin = listRevenueTotal > 0 ? ((listRevenueTotal - realizedCostTotal) / listRevenueTotal) * 100 : null;
+
   // Compute-on-read from the live price book — no cached cost columns.
   const costs = await computeProductsLive(db, productRows);
   const products = productRows.map((p) => {
     const c = costs.get(p.id)!;
+    const r = realizedByProduct.get(p.id);
+    const hasSales = (r?.unitsSold ?? 0) > 0;
     return {
       id: p.id,
       name: p.name,
@@ -58,7 +71,12 @@ export default async function DashboardPage() {
       template: p.template,
       totalCost: c.totalCost,
       grossMarginAmount: c.grossMarginAmount,
-      grossMarginPct: c.grossMarginPct,
+      grossMarginPct: c.grossMarginPct, // catalog (list) per-unit margin
+      hasSales,
+      // Realized margin drives the at-risk flag; products with no sales fall back
+      // to their catalog margin so every SKU stays flaggable.
+      effMargin: hasSales ? (r?.grossMarginPct ?? c.grossMarginPct) : c.grossMarginPct,
+      realizedMarginPct: hasSales ? (r?.grossMarginPct ?? 0) : null,
     };
   });
 
@@ -81,7 +99,9 @@ export default async function DashboardPage() {
   const sorted = [...products].sort((a, b) => a.grossMarginPct - b.grossMarginPct);
   const worst = sorted[0];
   const best = sorted[sorted.length - 1];
-  const atRisk = sorted.filter((p) => p.grossMarginPct < thr); // ascending
+  // At-risk flags on realized (post-discount) margin, falling back to catalog
+  // margin for products with no sales yet.
+  const atRisk = [...products].filter((p) => p.effMargin < thr).sort((a, b) => a.effMargin - b.effMargin);
   const marginVals = products.map((p) => p.grossMarginPct);
   const safeLow = Math.min(...marginVals);
   const safeHigh = Math.max(...marginVals);
@@ -151,9 +171,15 @@ export default async function DashboardPage() {
             />
           </div>
           <div className="flex justify-between font-mono text-[10.5px]" style={{ color: MUTED }}>
-            <span>across {totalSku} SKUs</span>
+            <span>across {totalSku} SKUs (list)</span>
             <span>goal {goal}%</span>
           </div>
+          {portfolioRealizedMargin != null && (
+            <div className="mt-1.5 border-t pt-1.5 font-mono text-[10.5px]" style={{ borderColor: "oklch(0.94 0.003 250)", color: MUTED }}>
+              realized <b style={{ color: portfolioRealizedMargin >= (portfolioListMargin ?? 0) ? "oklch(0.46 0.08 168)" : "oklch(0.55 0.13 40)" }}>{formatPercent(portfolioRealizedMargin)}</b>
+              {portfolioListMargin != null && <> · list {formatPercent(portfolioListMargin)} (post-discount)</>}
+            </div>
+          )}
         </div>
 
         {/* Products */}
@@ -183,7 +209,7 @@ export default async function DashboardPage() {
             {atRisk.length}
           </div>
           <div className="mt-3.5 font-mono text-[10.5px]" style={{ color: MUTED }}>
-            below {thr}% threshold
+            below {thr}% realized margin
           </div>
         </div>
       </div>
@@ -283,11 +309,12 @@ export default async function DashboardPage() {
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[13.5px] font-bold tracking-[-0.01em] text-ink-900" title={r.name}>{r.name}</div>
                       <div className="mt-0.5 truncate font-mono text-[10.5px]" style={{ color: MUTED }} title={r.template?.category || r.template?.name || "Custom"}>
-                        {r.template?.category || r.template?.name || "Custom"} · {formatMoney(r.grossMarginAmount, currency)}/unit
+                        {r.template?.category || r.template?.name || "Custom"}
+                        {r.hasSales ? " · realized" : ` · list ${formatPercent(r.grossMarginPct)}`}
                       </div>
                     </div>
-                    <div className="max-w-[55%] shrink-0 truncate text-right font-mono text-[15px] font-semibold" style={{ color: "oklch(0.55 0.13 40)" }} title={formatPercent(r.grossMarginPct)}>
-                      {formatPercent(r.grossMarginPct)}
+                    <div className="max-w-[55%] shrink-0 truncate text-right font-mono text-[15px] font-semibold" style={{ color: "oklch(0.55 0.13 40)" }} title={r.hasSales ? `Realized ${formatPercent(r.effMargin)} · list ${formatPercent(r.grossMarginPct)}` : formatPercent(r.effMargin)}>
+                      {formatPercent(r.effMargin)}
                     </div>
                   </Link>
                 ))}

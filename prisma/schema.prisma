@@ -280,6 +280,11 @@ model Product {
   name String
   sku  String
 
+  // Human-facing catalogue identifiers (optional). productCode is a short
+  // reference/part number; seriesName groups SKUs into a product line/range.
+  productCode String?
+  seriesName  String?
+
   // Optional so a product can be built from an "Empty Template" (no base recipe).
   templateId        String?
   template          Template?        @relation(fields: [templateId], references: [id], onDelete: Restrict)
@@ -342,6 +347,8 @@ model ProductHistory {
   // Product field snapshot as of this instant.
   name         String
   sku          String
+  productCode  String?
+  seriesName   String?
   status       ProductStatus
   sellingPrice Float
   comps        Json? // recipe as saved (slim: [{ masterCostId, lineType, quantity }])
@@ -384,6 +391,13 @@ enum SalesChannel {
   OTHER
 }
 
+// How a discount value is interpreted: a percentage of the base, or a flat
+// currency amount off it. Used by both line-item and order-level discounts.
+enum DiscountType {
+  PERCENT
+  FLAT
+}
+
 // A sale order (invoice) — the real-world unit of a sale, booked against one
 // customer on one date/channel. Holds one or more product line items (Sale).
 model Order {
@@ -392,6 +406,10 @@ model Order {
   customerId String?
   soldAt     DateTime
   channel    SalesChannel?
+  // Invoice-wide discount applied on top of any per-line discounts (e.g. a bulk
+  // or loyalty deal). Stored separately from line discounts so both coexist.
+  discountType  DiscountType?
+  discountValue Float         @default(0)
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
   company    Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -413,7 +431,13 @@ model Sale {
   orderId   String
   productId String
   quantity  Float
+  // List (catalogue) unit price — the price before any discount. The realized net
+  // price is unitPrice minus the line discount (see src/lib/discount.ts).
   unitPrice Float
+  // Per-line negotiated/promotional discount off the unit price. type null +
+  // value 0 => no line discount.
+  discountType  DiscountType?
+  discountValue Float         @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -436,6 +460,10 @@ model Customer {
   city      String?
   notes     String?
   archived  Boolean       @default(false)
+
+  // Standing discount % this customer has negotiated — pre-fills the order-level
+  // discount on a New Sale (still editable per sale). Null => none.
+  defaultDiscountPct Float?
 
   // Buyer-portal access (Module — Buyer Portal). When true, staff have granted
   // this customer login access; buyer Users and invites hang off it.

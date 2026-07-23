@@ -14,7 +14,7 @@ import {
 import { CustomerRowOpen, CustomerEditButton, NewCustomerButton, onCustomersChanged } from "./customer-drawers";
 import type { SalesChannel } from "@prisma/client";
 
-const GRID = "1.6fr 1.4fr 1fr 0.7fr 0.8fr 1fr 74px";
+const GRID = "1.5fr 1.3fr 0.9fr 0.7fr 0.6fr 0.6fr 0.85fr 64px";
 
 const CHANNEL_LABEL: Record<SalesChannel, string> = {
   RETAIL: "Retail",
@@ -124,6 +124,7 @@ export function CustomerBrowser({
             <span>Customer</span>
             <span>Contact</span>
             <span>Channel</span>
+            <span className="text-right">Discount</span>
             <span className="text-right">Orders</span>
             <span className="text-right">Units</span>
             <span className="text-right">Revenue</span>
@@ -148,13 +149,16 @@ export function CustomerBrowser({
               <div className="text-[12.5px] text-ink-600">
                 {c.channel ? CHANNEL_LABEL[c.channel] : <span className="text-ink-300">—</span>}
               </div>
+              <div className="text-right font-mono text-[13px]" style={{ color: c.defaultDiscountPct != null ? "oklch(0.5 0.12 25)" : undefined }}>
+                {c.defaultDiscountPct != null ? `${c.defaultDiscountPct}%` : <span className="text-ink-300">—</span>}
+              </div>
               <div className="text-right font-mono text-[13px] text-ink-600">{c.orders.toLocaleString("en-IN")}</div>
               <div className="text-right font-mono text-[13px] text-ink-600">{c.unitsSold.toLocaleString("en-IN")}</div>
               <div className="text-right font-mono text-[13px] font-semibold text-ink-900">{formatMoney(c.revenue, currency)}</div>
               <div className="flex justify-end gap-1.5">
                 {editable && !archived && (
                   <CustomerEditButton
-                    initial={{ id: c.id, name: c.name, email: c.email, phone: c.phone, channel: c.channel, gstin: c.gstin, city: c.city, notes: c.notes }}
+                    initial={{ id: c.id, name: c.name, email: c.email, phone: c.phone, channel: c.channel, gstin: c.gstin, city: c.city, notes: c.notes, defaultDiscountPct: c.defaultDiscountPct }}
                   />
                 )}
                 {editable && (

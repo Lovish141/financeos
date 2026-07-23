@@ -57,7 +57,7 @@ export default async function SalesPage({
         initialChannel={sp.channel ?? ""}
       />
 
-      <SalesDrawers products={products} customers={customers} />
+      <SalesDrawers products={products} customers={customers} currency={currency} />
     </div>
   );
 }
