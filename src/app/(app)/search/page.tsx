@@ -39,10 +39,17 @@ export default async function SearchPage({
       select: { id: true, name: true, category: true },
     }),
     db.product.findMany({
-      where: { OR: [{ name: { contains: query, mode: "insensitive" } }, { sku: { contains: query, mode: "insensitive" } }] },
+      where: {
+        OR: [
+          { name: { contains: query, mode: "insensitive" } },
+          { sku: { contains: query, mode: "insensitive" } },
+          { productCode: { contains: query, mode: "insensitive" } },
+          { seriesName: { contains: query, mode: "insensitive" } },
+        ],
+      },
       take: 8,
       select: {
-        id: true, name: true, sku: true, sellingPrice: true, comps: true,
+        id: true, name: true, sku: true, productCode: true, seriesName: true, sellingPrice: true, comps: true,
         templateVersion: true, template: { select: { name: true, category: true } },
       },
     }),
@@ -99,9 +106,13 @@ export default async function SearchPage({
             <Section title="Products" icon={<Package className="h-4 w-4" />}>
               {products.map((p) => (
                 <Link key={p.id} href={`/products/${p.id}`} className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3 last:border-0 hover:bg-ink-50/60">
-                  <span className="min-w-0 truncate" title={`${p.name} · ${p.sku}`}>
+                  <span className="min-w-0 truncate" title={`${p.name} · ${p.sku}${p.productCode ? " · " + p.productCode : ""}${p.seriesName ? " · " + p.seriesName : ""}`}>
                     <span className="font-medium text-ink-900">{p.name}</span>
-                    <span className="ml-2 text-xs text-ink-400">{p.sku}</span>
+                    <span className="ml-2 text-xs text-ink-400">
+                      {p.sku}
+                      {p.productCode && ` · ${p.productCode}`}
+                      {p.seriesName && ` · ${p.seriesName}`}
+                    </span>
                   </span>
                   <span className="shrink-0 text-sm text-ink-500">{formatPercent(productCosts.get(p.id)?.grossMarginPct ?? 0)} margin</span>
                 </Link>

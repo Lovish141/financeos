@@ -6,6 +6,7 @@ import { requireStaff, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { SALES_CHANNELS } from "@/lib/csv";
 import { validateCustomerFields } from "@/lib/validation";
+import { orderTotals, lineTotals, type DiscountType } from "@/lib/discount";
 import type { TenantDb } from "@/lib/tenant";
 import type { ActionResult } from "./cost-actions";
 import type { Prisma, SalesChannel } from "@prisma/client";
@@ -22,11 +23,21 @@ const customerSchema = z.object({
   gstin: z.string().optional(),
   city: z.string().optional(),
   notes: z.string().optional(),
+  defaultDiscountPct: z.string().optional(),
 });
 
 function clean(v: string | undefined): string | null {
   const t = (v ?? "").trim();
   return t || null;
+}
+
+/** Parse the standing-discount % field: blank => null, clamped to 0–100. */
+function parseDiscountPct(v: string | undefined): number | null | "invalid" {
+  const t = (v ?? "").trim().replace(/%/g, "");
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0 || n > 100) return "invalid";
+  return n === 0 ? null : n;
 }
 
 // True when another (optionally excluding `id`) customer already uses this name,
@@ -58,6 +69,9 @@ export async function createCustomer(_prev: ActionResult, formData: FormData): P
 
   if (await nameTaken(db, name)) return { error: `A customer named “${name}” already exists.` };
 
+  const discountPct = parseDiscountPct(data.defaultDiscountPct);
+  if (discountPct === "invalid") return { error: "Default discount must be between 0 and 100%." };
+
   await db.customer.create({
     data: {
       companyId,
@@ -68,6 +82,7 @@ export async function createCustomer(_prev: ActionResult, formData: FormData): P
       gstin: clean(data.gstin)?.toUpperCase() ?? null,
       city: clean(data.city),
       notes: clean(data.notes),
+      defaultDiscountPct: discountPct,
     },
   });
 
@@ -97,6 +112,9 @@ export async function updateCustomer(_prev: ActionResult, formData: FormData): P
 
   if (await nameTaken(db, name, id)) return { error: `A customer named “${name}” already exists.` };
 
+  const discountPct = parseDiscountPct(data.defaultDiscountPct);
+  if (discountPct === "invalid") return { error: "Default discount must be between 0 and 100%." };
+
   await db.customer.update({
     where: { id },
     data: {
@@ -107,6 +125,7 @@ export async function updateCustomer(_prev: ActionResult, formData: FormData): P
       gstin: clean(data.gstin)?.toUpperCase() ?? null,
       city: clean(data.city),
       notes: clean(data.notes),
+      defaultDiscountPct: discountPct,
     },
   });
 
@@ -182,9 +201,10 @@ export interface CustomerListItem {
   city: string | null;
   gstin: string | null;
   notes: string | null;
+  defaultDiscountPct: number | null;
   orders: number;
   unitsSold: number;
-  revenue: number;
+  revenue: number; // realized net revenue (after line + order discounts)
 }
 
 export async function searchCustomers(input: { q?: string; archived?: boolean }): Promise<CustomerListItem[]> {
@@ -203,14 +223,22 @@ export async function searchCustomers(input: { q?: string; archived?: boolean })
   const rows = await db.customer.findMany({
     where,
     orderBy: { name: "asc" },
-    include: { orders: { select: { items: { select: { quantity: true, unitPrice: true } } } } },
+    include: {
+      orders: {
+        select: {
+          discountType: true,
+          discountValue: true,
+          items: { select: { quantity: true, unitPrice: true, discountType: true, discountValue: true } },
+        },
+      },
+    },
   });
 
   return rows.map((c) => {
     const lines = c.orders.flatMap((o) => o.items);
-    const orders = c.orders.length;
     const unitsSold = lines.reduce((s, x) => s + x.quantity, 0);
-    const revenue = lines.reduce((s, x) => s + x.quantity * x.unitPrice, 0);
+    // Realized net revenue: each order netted through the discount engine.
+    const revenue = c.orders.reduce((sum, o) => sum + customerOrderNet(o), 0);
     return {
       id: c.id,
       name: c.name,
@@ -220,11 +248,25 @@ export async function searchCustomers(input: { q?: string; archived?: boolean })
       city: c.city,
       gstin: c.gstin,
       notes: c.notes,
-      orders,
+      defaultDiscountPct: c.defaultDiscountPct,
+      orders: c.orders.length,
       unitsSold,
       revenue,
     };
   });
+}
+
+/** Net (post-discount) total of one order, via the shared discount engine. */
+function customerOrderNet(o: {
+  discountType: DiscountType | null;
+  discountValue: number;
+  items: { quantity: number; unitPrice: number; discountType: DiscountType | null; discountValue: number }[];
+}): number {
+  return orderTotals({
+    lines: o.items.map((it) => ({ listPrice: it.unitPrice, quantity: it.quantity, discountType: it.discountType, discountValue: it.discountValue })),
+    orderDiscountType: o.discountType,
+    orderDiscountValue: o.discountValue,
+  }).netTotal;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +277,7 @@ export interface CustomerOption {
   id: string;
   name: string;
   channel: SalesChannel | null;
+  defaultDiscountPct: number | null;
 }
 
 export async function customerOptions(): Promise<CustomerOption[]> {
@@ -242,7 +285,7 @@ export async function customerOptions(): Promise<CustomerOption[]> {
   const rows = await db.customer.findMany({
     where: { archived: false },
     orderBy: { name: "asc" },
-    select: { id: true, name: true, channel: true },
+    select: { id: true, name: true, channel: true, defaultDiscountPct: true },
   });
   return rows;
 }
@@ -261,11 +304,12 @@ export interface CustomerDetail {
   gstin: string | null;
   city: string | null;
   notes: string | null;
+  defaultDiscountPct: number | null;
   archived: boolean;
   currency: string;
   orders: number;
   unitsSold: number;
-  revenue: number;
+  revenue: number; // realized net revenue
   recent: { id: string; productName: string; sku: string; quantity: number; unitPrice: number; revenue: number; soldAt: string }[];
 }
 
@@ -286,7 +330,7 @@ export async function getCustomerDetail(id: string): Promise<CustomerDetail | { 
   const company = await prisma.company.findUnique({ where: { id: companyId }, select: { baseCurrency: true } });
 
   // Flatten line items across the customer's orders (newest order first), each
-  // carrying its parent order's date, for the profile rollup + recent list.
+  // carrying its parent order's date + net (post-line-discount) line revenue.
   const lines = c.orders.flatMap((o) =>
     o.items.map((it) => ({
       id: it.id,
@@ -294,12 +338,12 @@ export async function getCustomerDetail(id: string): Promise<CustomerDetail | { 
       sku: it.product.sku,
       quantity: it.quantity,
       unitPrice: it.unitPrice,
-      revenue: it.quantity * it.unitPrice,
+      revenue: lineTotals({ listPrice: it.unitPrice, quantity: it.quantity, discountType: it.discountType, discountValue: it.discountValue }).netRevenue,
       soldAt: o.soldAt.toISOString(),
     })),
   );
   const unitsSold = lines.reduce((s, x) => s + x.quantity, 0);
-  const revenue = lines.reduce((s, x) => s + x.revenue, 0);
+  const revenue = c.orders.reduce((sum, o) => sum + customerOrderNet(o), 0);
 
   return {
     ok: true,
@@ -311,6 +355,7 @@ export async function getCustomerDetail(id: string): Promise<CustomerDetail | { 
     gstin: c.gstin,
     city: c.city,
     notes: c.notes,
+    defaultDiscountPct: c.defaultDiscountPct,
     archived: c.archived,
     currency: company?.baseCurrency ?? "INR",
     orders: c.orders.length,

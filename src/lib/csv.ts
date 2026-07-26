@@ -154,6 +154,36 @@ export function parseChannel(raw: string): SalesChannelValue | null | undefined 
   return CHANNEL_ALIASES[v]; // undefined => invalid
 }
 
+export type DiscountTypeValue = "PERCENT" | "FLAT";
+
+const DISCOUNT_TYPE_ALIASES: Record<string, DiscountTypeValue> = {
+  percent: "PERCENT", pct: "PERCENT", percentage: "PERCENT", "%": "PERCENT",
+  flat: "FLAT", amount: "FLAT", fixed: "FLAT", rs: "FLAT", inr: "FLAT",
+};
+
+/**
+ * Parse a discount type + value pair from a row. Returns null type / 0 value when
+ * empty; `invalid` when the type or value can't be understood. A value with no
+ * explicit type defaults to PERCENT (the common case for negotiated discounts).
+ */
+export function parseDiscount(
+  typeRaw: string,
+  valueRaw: string,
+): { type: DiscountTypeValue | null; value: number } | "invalid" {
+  const vs = valueRaw.trim();
+  const ts = typeRaw.trim().toLowerCase();
+  if (!vs && !ts) return { type: null, value: 0 };
+  if (!vs) return { type: null, value: 0 }; // a type with no value is a no-op
+  const value = Number(vs.replace(/[%₹,]/g, ""));
+  if (!Number.isFinite(value) || value < 0) return "invalid";
+  if (value === 0) return { type: null, value: 0 };
+  let type: DiscountTypeValue = ts ? DISCOUNT_TYPE_ALIASES[ts] : "PERCENT";
+  if (vs.includes("%")) type = "PERCENT";
+  if (!type) return "invalid";
+  if (type === "PERCENT" && value > 100) return "invalid";
+  return { type, value };
+}
+
 export interface ParsedSaleRow {
   line: number; // 1-based source line (header = line 1) for accurate reporting
   invoice: string | null; // optional group key — rows sharing one become one order
@@ -163,6 +193,10 @@ export interface ParsedSaleRow {
   soldAt: Date;
   channel: SalesChannelValue | null;
   customer: string | null;
+  lineDiscountType: DiscountTypeValue | null;
+  lineDiscountValue: number;
+  orderDiscountType: DiscountTypeValue | null;
+  orderDiscountValue: number;
 }
 
 export interface SalesCsvOutcome {
@@ -227,6 +261,10 @@ export function parseSalesCsv(text: string, now: Date = new Date()): SalesCsvOut
   const iChannel = col("channel");
   const iCustomer = col("customer", "account");
   const iInvoice = col("invoice", "invoice_no", "invoice_id", "order", "order_id");
+  const iLineDisc = col("line_discount", "discount", "line_disc");
+  const iLineDiscType = col("line_discount_type", "discount_type", "line_disc_type");
+  const iOrderDisc = col("order_discount", "order_disc", "invoice_discount");
+  const iOrderDiscType = col("order_discount_type", "order_disc_type", "invoice_discount_type");
 
   if (iSku < 0 || iQty < 0 || iDate < 0 || iPrice < 0) {
     return { valid: [], errors: [], fatal: "Header must include: sku, quantity, date, unit_price (channel, customer optional)." };
@@ -274,7 +312,22 @@ export function parseSalesCsv(text: string, now: Date = new Date()): SalesCsvOut
       continue;
     }
 
-    valid.push({ line, invoice: invoice || null, sku, quantity, unitPrice, soldAt, channel, customer: customer || null });
+    const lineDisc = parseDiscount(
+      iLineDiscType >= 0 ? (cells[iLineDiscType] ?? "") : "",
+      iLineDisc >= 0 ? (cells[iLineDisc] ?? "") : "",
+    );
+    if (lineDisc === "invalid") { errors.push({ line, error: "Invalid line discount." }); continue; }
+    const orderDisc = parseDiscount(
+      iOrderDiscType >= 0 ? (cells[iOrderDiscType] ?? "") : "",
+      iOrderDisc >= 0 ? (cells[iOrderDisc] ?? "") : "",
+    );
+    if (orderDisc === "invalid") { errors.push({ line, error: "Invalid order discount." }); continue; }
+
+    valid.push({
+      line, invoice: invoice || null, sku, quantity, unitPrice, soldAt, channel, customer: customer || null,
+      lineDiscountType: lineDisc.type, lineDiscountValue: lineDisc.value,
+      orderDiscountType: orderDisc.type, orderDiscountValue: orderDisc.value,
+    });
   }
 
   return { valid, errors };

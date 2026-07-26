@@ -12,6 +12,8 @@ export interface SnapshotProduct {
   id: string;
   name: string;
   sku: string;
+  productCode?: string | null;
+  seriesName?: string | null;
   status: ProductStatus;
   sellingPrice: number;
   comps: Prisma.JsonValue | null;
@@ -59,6 +61,8 @@ export async function snapshotProducts(
         kind,
         name: p.name,
         sku: p.sku,
+        productCode: p.productCode ?? null,
+        seriesName: p.seriesName ?? null,
         status: p.status,
         sellingPrice: p.sellingPrice,
         // Product.comps uses SQL NULL for "no recipe" (see tenant filters that

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, RotateCcw, X, AlertTriangle } from "lucide-react";
+import { Loader2, RotateCcw, X, AlertTriangle, Plus } from "lucide-react";
 import { Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerSkeleton } from "@/components/drawer";
 import { toast } from "@/components/toaster";
 import {
@@ -10,8 +10,10 @@ import {
   getProductDraft,
   type ProductDraft,
 } from "@/server/actions/product-actions";
+import type { CreatedMasterCost } from "@/server/actions/cost-actions";
 import { qtyStepForUnit } from "@/lib/costing";
 import { formatCurrency, formatPercent } from "@/lib/utils";
+import { NewComponentDialog } from "./new-component-dialog";
 
 const TYPE_DOT: Record<string, string> = {
   RAW_MATERIAL: "oklch(0.58 0.12 45)",
@@ -55,6 +57,8 @@ export function ProductFormDrawer({
   onSaved: () => void;
 }) {
   const [name, setName] = useState("");
+  const [productCode, setProductCode] = useState("");
+  const [seriesName, setSeriesName] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [price, setPrice] = useState("");
   const [status, setStatus] = useState("ACTIVE");
@@ -63,11 +67,24 @@ export function ProductFormDrawer({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [newCompOpen, setNewCompOpen] = useState(false);
+  // Components created inline from this drawer. They're already in the price book,
+  // but the server-rendered `masterCosts` prop won't include them until the page
+  // data refreshes — so keep them here to populate the picker straight away.
+  const [justCreated, setJustCreated] = useState<MasterCostOption[]>([]);
+
+  // Full add-pool: the price book as rendered plus anything created inline
+  // (deduped by id, so nothing doubles up once the page props catch up).
+  const pool = useMemo(() => {
+    const byId = new Map(masterCosts.map((m) => [m.id, m]));
+    for (const m of justCreated) if (!byId.has(m.id)) byId.set(m.id, m);
+    return [...byId.values()];
+  }, [masterCosts, justCreated]);
 
   const catalogById = useMemo(
     // Add-pool items are always non-archived (the page excludes archived).
-    () => new Map(masterCosts.map((m) => [m.id, { ...m, archived: false } as Meta])),
-    [masterCosts],
+    () => new Map(pool.map((m) => [m.id, { ...m, archived: false } as Meta])),
+    [pool],
   );
   const meta = (id: string): Meta =>
     catalogById.get(id) ?? extraMeta[id] ?? { name: "Unknown item", type: "COMPONENT", unit: "pc", currentCost: 0, archived: false };
@@ -88,6 +105,8 @@ export function ProductFormDrawer({
     if (mode === "create") {
       const firstTid = templates[0]?.id ?? "";
       setName("");
+      setProductCode("");
+      setSeriesName("");
       setPrice("");
       setStatus("ACTIVE");
       setTemplateId(firstTid);
@@ -103,6 +122,8 @@ export function ProductFormDrawer({
         }
         const d = res as ProductDraft;
         setName(d.name);
+        setProductCode(d.productCode ?? "");
+        setSeriesName(d.seriesName ?? "");
         setPrice(String(d.sellingPrice));
         setStatus(d.status);
         setTemplateId(d.templateId ?? "");
@@ -143,7 +164,14 @@ export function ProductFormDrawer({
   const marginRs = priceNum - totalCost;
   const marginPct = priceNum > 0 ? (marginRs / priceNum) * 100 : 0;
 
-  const addable = masterCosts.filter((m) => !rows.some((r) => r.masterCostId === m.id));
+  const addable = pool.filter((m) => !rows.some((r) => r.masterCostId === m.id));
+
+  // A component created in the inline dialog joins the pool and the recipe at once,
+  // so the user lands back on a product that already has the line they needed.
+  function onComponentCreated(item: CreatedMasterCost) {
+    setJustCreated((prev) => [...prev, item]);
+    setRows((prev) => (prev.some((r) => r.masterCostId === item.id) ? prev : [...prev, { masterCostId: item.id, qty: "1" }]));
+  }
 
   async function handleSave() {
     setError(null);
@@ -155,6 +183,8 @@ export function ProductFormDrawer({
     const fd = new FormData();
     if (mode === "edit" && productId) fd.set("id", productId);
     fd.set("name", name.trim());
+    fd.set("productCode", productCode.trim());
+    fd.set("seriesName", seriesName.trim());
     fd.set("templateId", templateId);
     fd.set("sellingPrice", String(priceNum));
     fd.set("status", status);
@@ -184,6 +214,17 @@ export function ProductFormDrawer({
             <div>
               <label className="label">Product name</label>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Premium Basin Mixer" autoFocus />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Product code</label>
+                <input className="input" value={productCode} onChange={(e) => setProductCode(e.target.value)} placeholder="e.g. BM-2043" />
+              </div>
+              <div>
+                <label className="label">Series name</label>
+                <input className="input" value={seriesName} onChange={(e) => setSeriesName(e.target.value)} placeholder="e.g. Aqua Series" />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -278,20 +319,30 @@ export function ProductFormDrawer({
                   </div>
                 );
               })}
-              <div className="p-2.5">
+              <div className="flex items-center gap-2 p-2.5">
                 <select
-                  className="input cursor-pointer text-[13px] font-semibold text-brand-600"
+                  className="input min-w-0 flex-1 cursor-pointer text-[13px] font-semibold text-brand-600"
                   value=""
                   onChange={(e) => { addRow(e.target.value); e.currentTarget.value = ""; }}
                   disabled={addable.length === 0}
                 >
-                  <option value="">+ Add component…</option>
+                  <option value="">{addable.length === 0 ? "All components added" : "+ Add component…"}</option>
                   {addable.map((m) => (
                     <option key={m.id} value={m.id} title={m.name}>
                       {m.name} — {formatCurrency(m.currentCost, currency)}/{m.unit}
                     </option>
                   ))}
                 </select>
+                {/* Escape hatch for a component that isn't in the price book yet —
+                    creating it here avoids losing this half-filled product. */}
+                <button
+                  type="button"
+                  onClick={() => setNewCompOpen(true)}
+                  title="Create a component that isn't in the price book yet"
+                  className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] border border-ink-200 bg-white px-2.5 py-[9px] text-[12.5px] font-semibold text-ink-700 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
+                >
+                  <Plus className="h-3.5 w-3.5" strokeWidth={2.2} /> New component
+                </button>
               </div>
             </div>
 
@@ -327,6 +378,14 @@ export function ProductFormDrawer({
           {saving ? "Saving…" : mode === "create" ? "Create product" : "Save changes"}
         </button>
       </DrawerFooter>
+
+      {/* Portals above this drawer, so the in-progress product stays untouched. */}
+      <NewComponentDialog
+        open={newCompOpen}
+        currency={currency}
+        onClose={() => setNewCompOpen(false)}
+        onCreated={onComponentCreated}
+      />
     </Drawer>
   );
 }

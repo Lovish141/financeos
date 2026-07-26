@@ -189,6 +189,10 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
           companyId,
           name: p.name,
           sku: p.sku,
+          // Demo catalogue identifiers: a sequential part code, and the
+          // series/product line taken from the template name.
+          productCode: "PC-" + String(1001 + seededProducts.length),
+          seriesName: t.name,
           templateId: template.id,
           templateVersionId: version.id,
           comps: comps as object,
@@ -200,38 +204,47 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
     }
   }
 
-  // 4. Customers (Module 9) — the master accounts sales are booked against.
-  const CUSTOMER_DEFS: { name: string; channel: SalesChannel; city: string; email: string }[] = [
-    { name: "Sharma Traders", channel: "RETAIL", city: "Delhi", email: "orders@sharmatraders.in" },
-    { name: "Metro Sanitary", channel: "WHOLESALE", city: "Mumbai", email: "purchase@metrosanitary.com" },
-    { name: "Gulf Imports FZE", channel: "EXPORT", city: "Dubai", email: "buy@gulfimports.ae" },
-    { name: "BuildMart Online", channel: "ONLINE", city: "Bengaluru", email: "vendors@buildmart.in" },
-    { name: "Kohli & Sons", channel: "DISTRIBUTOR", city: "Ludhiana", email: "kohlisons@gmail.com" },
-    { name: "Prime Fittings", channel: "WHOLESALE", city: "Ahmedabad", email: "sales@primefittings.in" },
+  // 4. Customers (Module 9) — the master accounts sales are booked against. Bulk
+  // channels carry a standing discount % that pre-fills their order discount.
+  const CUSTOMER_DEFS: { name: string; channel: SalesChannel; city: string; email: string; defaultDiscountPct: number | null }[] = [
+    { name: "Sharma Traders", channel: "RETAIL", city: "Delhi", email: "orders@sharmatraders.in", defaultDiscountPct: null },
+    { name: "Metro Sanitary", channel: "WHOLESALE", city: "Mumbai", email: "purchase@metrosanitary.com", defaultDiscountPct: 10 },
+    { name: "Gulf Imports FZE", channel: "EXPORT", city: "Dubai", email: "buy@gulfimports.ae", defaultDiscountPct: 12 },
+    { name: "BuildMart Online", channel: "ONLINE", city: "Bengaluru", email: "vendors@buildmart.in", defaultDiscountPct: 5 },
+    { name: "Kohli & Sons", channel: "DISTRIBUTOR", city: "Ludhiana", email: "kohlisons@gmail.com", defaultDiscountPct: 8 },
+    { name: "Prime Fittings", channel: "WHOLESALE", city: "Ahmedabad", email: "sales@primefittings.in", defaultDiscountPct: 7 },
   ];
-  const seededCustomers: { id: string; channel: SalesChannel }[] = [];
+  const seededCustomers: { id: string; channel: SalesChannel; defaultDiscountPct: number | null }[] = [];
   for (const c of CUSTOMER_DEFS) {
     const created = await prisma.customer.create({
-      data: { companyId, name: c.name, channel: c.channel, city: c.city, email: c.email },
+      data: { companyId, name: c.name, channel: c.channel, city: c.city, email: c.email, defaultDiscountPct: c.defaultDiscountPct },
     });
-    seededCustomers.push({ id: created.id, channel: c.channel });
+    seededCustomers.push({ id: created.id, channel: c.channel, defaultDiscountPct: c.defaultDiscountPct });
   }
 
-  // 5. Sales (Module 8) — a few months of realized transactions per product, at
-  // prices near (but often below) catalog so realized margin diverges from the
-  // theoretical catalog margin. Each links to a customer whose channel it uses.
-  // Deterministic pseudo-random for a stable demo.
+  // 5. Sales (Module 8) — a few months of realized transactions per product. Lines
+  // carry the catalogue LIST price plus a separate line/order discount, so realized
+  // (net) margin diverges from the list margin. Deterministic for a stable demo.
   let seed = 20260708;
   const rand = () => {
     seed = (seed * 1103515245 + 12345) & 0x7fffffff;
     return seed / 0x7fffffff;
   };
 
-  // A realized-price line for one product within an order.
+  // A line at LIST price, with a modest per-line discount on some lines.
   const priceLine = (p: { id: string; price: number }, bulk: boolean) => {
     const quantity = bulk ? 40 + Math.floor(rand() * 260) : 5 + Math.floor(rand() * 45);
-    const discount = (bulk ? 0.06 : 0.0) + rand() * 0.12; // 0–18% off catalog
-    return { companyId, productId: p.id, quantity, unitPrice: Math.round(p.price * (1 - discount)) };
+    // ~40% of lines get a negotiated line discount of 2–8%.
+    const hasLineDisc = rand() < 0.4;
+    const lineDisc = hasLineDisc ? 2 + Math.floor(rand() * 6) : 0;
+    return {
+      companyId,
+      productId: p.id,
+      quantity,
+      unitPrice: p.price, // list price; discounts are stored separately
+      discountType: (lineDisc > 0 ? "PERCENT" : null) as "PERCENT" | null,
+      discountValue: lineDisc,
+    };
   };
 
   // Build orders (invoices): each is booked against one customer/date/channel and
@@ -251,12 +264,17 @@ export async function seedCompanyDemo(prisma: PrismaClient, companyId: string): 
         if (!lineProducts.some((lp) => lp.id === other.id)) lineProducts.push(other);
       }
 
+      // Order-level discount: apply the customer's standing discount to most orders.
+      const orderDisc = customer.defaultDiscountPct && rand() < 0.8 ? customer.defaultDiscountPct : 0;
+
       await prisma.order.create({
         data: {
           companyId,
           customerId: customer.id,
           soldAt: daysAgo(Math.floor(rand() * 120)),
           channel,
+          discountType: orderDisc > 0 ? "PERCENT" : null,
+          discountValue: orderDisc,
           items: { create: lineProducts.map((lp) => priceLine(lp, bulk)) },
         },
       });

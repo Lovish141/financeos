@@ -14,8 +14,11 @@ import {
   type OrderListItem,
 } from "@/server/actions/sales-actions";
 import type { CustomerOption } from "@/server/actions/customer-actions";
+import { orderTotals, type DiscountType } from "@/lib/discount";
+import { formatCurrency } from "@/lib/utils";
 
 const GREEN = "oklch(0.48 0.08 168)";
+const RED = "oklch(0.55 0.14 40)";
 
 export interface ProductOption {
   id: string;
@@ -77,7 +80,7 @@ export function ImportSalesButton() {
 }
 
 // ---- controller ------------------------------------------------------------
-function SalesDrawersController({ products, customers }: { products: ProductOption[]; customers: CustomerOption[] }) {
+function SalesDrawersController({ products, customers, currency }: { products: ProductOption[]; customers: CustomerOption[]; currency: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -118,6 +121,7 @@ function SalesDrawersController({ products, customers }: { products: ProductOpti
         open={!!formOpen}
         products={products}
         customers={customers}
+        currency={currency}
         mode={view?.kind === "edit" ? "edit" : "create"}
         initial={view?.kind === "edit" ? view.sale : undefined}
         onClose={() => setOpen(false)}
@@ -128,10 +132,10 @@ function SalesDrawersController({ products, customers }: { products: ProductOpti
   );
 }
 
-export function SalesDrawers({ products, customers }: { products: ProductOption[]; customers: CustomerOption[] }) {
+export function SalesDrawers({ products, customers, currency }: { products: ProductOption[]; customers: CustomerOption[]; currency: string }) {
   return (
     <Suspense fallback={null}>
-      <SalesDrawersController products={products} customers={customers} />
+      <SalesDrawersController products={products} customers={customers} currency={currency} />
     </Suspense>
   );
 }
@@ -147,17 +151,50 @@ function todayISO() {
 }
 
 // ---- create / edit ---------------------------------------------------------
-// One editable product line within the sale order form.
-type LineDraft = { productId: string; quantity: string; unitPrice: string };
+// One editable product line within the sale order form. `unitPrice` is the list
+// price; the discount reduces it to a net price (computed live for preview).
+type LineDraft = {
+  productId: string;
+  quantity: string;
+  unitPrice: string;
+  discountType: DiscountType;
+  discountValue: string;
+};
 
 function newLine(product?: ProductOption): LineDraft {
-  return { productId: product?.id ?? "", quantity: "", unitPrice: product ? String(product.sellingPrice) : "" };
+  return {
+    productId: product?.id ?? "",
+    quantity: "",
+    unitPrice: product ? String(product.sellingPrice) : "",
+    discountType: "PERCENT",
+    discountValue: "",
+  };
+}
+
+/** A compact %/₹ toggle used by both line and order discount inputs. */
+function DiscountTypeToggle({ value, onChange }: { value: DiscountType; onChange: (t: DiscountType) => void }) {
+  return (
+    <div className="flex overflow-hidden rounded-lg border border-ink-200">
+      {(["PERCENT", "FLAT"] as DiscountType[]).map((t) => (
+        <button
+          key={t}
+          type="button"
+          onClick={() => onChange(t)}
+          className={`px-2 py-1 font-mono text-[12px] font-semibold transition-colors ${value === t ? "bg-brand-600 text-white" : "bg-white text-ink-500 hover:bg-ink-100"}`}
+          title={t === "PERCENT" ? "Percentage discount" : "Flat amount discount"}
+        >
+          {t === "PERCENT" ? "%" : "₹"}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function SaleFormDrawer({
   open,
   products,
   customers,
+  currency,
   mode,
   initial,
   onClose,
@@ -166,6 +203,7 @@ function SaleFormDrawer({
   open: boolean;
   products: ProductOption[];
   customers: CustomerOption[];
+  currency: string;
   mode: "create" | "edit";
   initial?: OrderListItem;
   onClose: () => void;
@@ -175,6 +213,8 @@ function SaleFormDrawer({
   const [soldAt, setSoldAt] = useState(todayISO());
   const [channel, setChannel] = useState("");
   const [customerId, setCustomerId] = useState("");
+  const [orderDiscountType, setOrderDiscountType] = useState<DiscountType>("PERCENT");
+  const [orderDiscountValue, setOrderDiscountValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -182,25 +222,43 @@ function SaleFormDrawer({
     if (!open) return;
     setError(null);
     if (mode === "edit" && initial) {
-      setLines(initial.items.map((it) => ({ productId: it.productId, quantity: String(it.quantity), unitPrice: String(it.unitPrice) })));
+      setLines(
+        initial.items.map((it) => ({
+          productId: it.productId,
+          quantity: String(it.quantity),
+          unitPrice: String(it.unitPrice),
+          discountType: it.discountType ?? "PERCENT",
+          discountValue: it.discountValue ? String(it.discountValue) : "",
+        })),
+      );
       setSoldAt(initial.soldAt.slice(0, 10));
       setChannel(initial.channel ?? "");
       setCustomerId(initial.customerId ?? "");
+      setOrderDiscountType(initial.orderDiscountType ?? "PERCENT");
+      setOrderDiscountValue(initial.orderDiscountValue ? String(initial.orderDiscountValue) : "");
     } else {
       setLines([newLine(products[0])]);
       setSoldAt(todayISO());
       setChannel("");
       setCustomerId("");
+      setOrderDiscountType("PERCENT");
+      setOrderDiscountValue("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mode, initial]);
 
-  // Picking a customer defaults the channel to their usual one (create mode only).
+  // Picking a customer defaults the channel to their usual one and pre-fills the
+  // order-level discount from the customer's standing discount (create mode only,
+  // and only when the user hasn't already typed one).
   function onCustomerChange(id: string) {
     setCustomerId(id);
-    if (mode === "create" && !channel) {
+    if (mode === "create") {
       const c = customers.find((x) => x.id === id);
-      if (c?.channel) setChannel(c.channel);
+      if (c?.channel && !channel) setChannel(c.channel);
+      if (c?.defaultDiscountPct && !orderDiscountValue.trim()) {
+        setOrderDiscountType("PERCENT");
+        setOrderDiscountValue(String(c.defaultDiscountPct));
+      }
     }
   }
 
@@ -228,11 +286,17 @@ function SaleFormDrawer({
     setLines((ls) => ls.filter((_, idx) => idx !== i));
   }
 
-  const orderTotal = lines.reduce((sum, l) => {
-    const q = parseFloat(l.quantity);
-    const p = parseFloat(l.unitPrice);
-    return sum + (q > 0 && p >= 0 ? q * p : 0);
-  }, 0);
+  // Live invoice totals through the shared discount engine (same math as server).
+  const totals = orderTotals({
+    lines: lines.map((l) => ({
+      listPrice: parseFloat(l.unitPrice) || 0,
+      quantity: parseFloat(l.quantity) || 0,
+      discountType: l.discountType,
+      discountValue: parseFloat(l.discountValue) || 0,
+    })),
+    orderDiscountType,
+    orderDiscountValue: parseFloat(orderDiscountValue) || 0,
+  });
 
   async function handleSave() {
     setError(null);
@@ -242,7 +306,11 @@ function SaleFormDrawer({
       if (!l.productId) return setError(`Pick a product for line ${i + 1}.`);
       if (!(parseFloat(l.quantity) > 0)) return setError(`Quantity for line ${i + 1} must be greater than 0.`);
       if (!(parseFloat(l.unitPrice) >= 0)) return setError(`Unit price for line ${i + 1} must be 0 or more.`);
+      if (l.discountValue.trim() && !(parseFloat(l.discountValue) >= 0)) return setError(`Discount for line ${i + 1} isn't valid.`);
+      if (l.discountType === "PERCENT" && parseFloat(l.discountValue) > 100) return setError(`Line ${i + 1} discount can't exceed 100%.`);
     }
+    if (orderDiscountValue.trim() && !(parseFloat(orderDiscountValue) >= 0)) return setError("Order discount isn't valid.");
+    if (orderDiscountType === "PERCENT" && parseFloat(orderDiscountValue) > 100) return setError("Order discount can't exceed 100%.");
     if (!soldAt) return setError("Sale date is required.");
     if (soldAt > todayISO()) return setError("Sale date can't be in the future.");
 
@@ -252,9 +320,19 @@ function SaleFormDrawer({
     fd.set("soldAt", soldAt);
     fd.set("channel", channel);
     fd.set("customerId", customerId);
+    fd.set("orderDiscountType", orderDiscountType);
+    fd.set("orderDiscountValue", orderDiscountValue.trim() ? orderDiscountValue : "0");
     fd.set(
       "items",
-      JSON.stringify(lines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice) }))),
+      JSON.stringify(
+        lines.map((l) => ({
+          productId: l.productId,
+          quantity: Number(l.quantity),
+          unitPrice: Number(l.unitPrice),
+          discountType: l.discountValue.trim() ? l.discountType : "",
+          discountValue: l.discountValue.trim() ? Number(l.discountValue) : 0,
+        })),
+      ),
     );
 
     const res = await (mode === "create" ? createOrder : updateOrder)(undefined, fd);
@@ -266,7 +344,7 @@ function SaleFormDrawer({
   }
 
   return (
-    <Drawer open={open} onClose={onClose} width={520}>
+    <Drawer open={open} onClose={onClose} width={560}>
       <DrawerHeader onClose={onClose}>
         <h3 className="text-[18px] font-extrabold tracking-[-0.02em] text-ink-900">
           {mode === "create" ? "New sale" : "Edit sale"}
@@ -304,44 +382,101 @@ function SaleFormDrawer({
 
           <div>
             <label className="label">Products</label>
-            <div className="space-y-2">
-              <div className="grid gap-2 font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-400" style={{ gridTemplateColumns: "1fr 68px 88px 30px" }}>
-                <span>Product</span>
-                <span className="text-right">Qty</span>
-                <span className="text-right">Price ₹</span>
-                <span />
-              </div>
-              {lines.map((l, i) => (
-                <div key={i} className="grid items-center gap-2" style={{ gridTemplateColumns: "1fr 68px 88px 30px" }}>
-                  <select className="input" value={l.productId} onChange={(e) => onLineProductChange(i, e.target.value)}>
-                    {products.length === 0 && <option value="">No products yet</option>}
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} · {p.sku}</option>
-                    ))}
-                  </select>
-                  <input className="input px-2 text-right" type="number" step="any" min="0" value={l.quantity} onChange={(e) => patchLine(i, { quantity: e.target.value })} placeholder="0" />
-                  <input className="input px-2 text-right" type="number" step="0.01" min="0" value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: e.target.value })} placeholder="0" />
-                  <button
-                    type="button"
-                    title="Remove line"
-                    onClick={() => removeLine(i)}
-                    disabled={lines.length === 1}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-risk-500 disabled:pointer-events-none disabled:opacity-30"
-                  >
-                    <Trash2 className="h-[15px] w-[15px]" strokeWidth={1.9} />
-                  </button>
-                </div>
-              ))}
+            <div className="space-y-2.5">
+              {lines.map((l, i) => {
+                const list = parseFloat(l.unitPrice) || 0;
+                const qty = parseFloat(l.quantity) || 0;
+                const disc = l.discountValue.trim()
+                  ? l.discountType === "PERCENT"
+                    ? (list * Math.min(parseFloat(l.discountValue) || 0, 100)) / 100
+                    : Math.min(parseFloat(l.discountValue) || 0, list)
+                  : 0;
+                const netUnit = Math.max(0, list - disc);
+                return (
+                  <div key={i} className="rounded-xl border border-[var(--border)] p-2.5">
+                    <div className="flex items-center gap-2">
+                      <select className="input min-w-0 flex-1" value={l.productId} onChange={(e) => onLineProductChange(i, e.target.value)}>
+                        {products.length === 0 && <option value="">No products yet</option>}
+                        {products.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name} · {p.sku}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        title="Remove line"
+                        onClick={() => removeLine(i)}
+                        disabled={lines.length === 1}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-risk-500 disabled:pointer-events-none disabled:opacity-30"
+                      >
+                        <Trash2 className="h-[15px] w-[15px]" strokeWidth={1.9} />
+                      </button>
+                    </div>
+                    <div className="mt-2 grid items-end gap-2" style={{ gridTemplateColumns: "56px 82px 1fr auto" }}>
+                      <label className="block">
+                        <span className="mb-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-ink-400">Qty</span>
+                        <input className="input px-2 text-right" type="number" step="any" min="0" value={l.quantity} onChange={(e) => patchLine(i, { quantity: e.target.value })} placeholder="0" />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-ink-400">List ₹</span>
+                        <input className="input px-2 text-right" type="number" step="0.01" min="0" value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: e.target.value })} placeholder="0" />
+                      </label>
+                      <label className="block min-w-0">
+                        <span className="mb-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-ink-400">Discount</span>
+                        <div className="flex items-center gap-1.5">
+                          <input className="input px-2 text-right" type="number" step="0.01" min="0" value={l.discountValue} onChange={(e) => patchLine(i, { discountValue: e.target.value })} placeholder="0" />
+                          <DiscountTypeToggle value={l.discountType} onChange={(t) => patchLine(i, { discountType: t })} />
+                        </div>
+                      </label>
+                      <div className="pb-1.5 text-right">
+                        <span className="mb-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-ink-400">Net / line</span>
+                        <span className="whitespace-nowrap font-mono text-[13px] font-semibold text-ink-900" title={disc > 0 ? `List ${formatCurrency(list, currency)} → net ${formatCurrency(netUnit, currency)}` : undefined}>
+                          {formatCurrency(netUnit * qty, currency)}
+                        </span>
+                        {disc > 0 && (
+                          <span className="block font-mono text-[9.5px]" style={{ color: RED }}>−{formatCurrency(disc * qty, currency)}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             <button type="button" onClick={addLine} disabled={products.length === 0} className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-brand-600 transition-colors hover:text-brand-700 disabled:opacity-40">
               <Plus className="h-3.5 w-3.5" /> Add product
             </button>
           </div>
 
-          <div className="rounded-[10px] px-4 py-3" style={{ background: "oklch(0.955 0.025 168)" }}>
-            <span className="font-mono text-[9.5px] uppercase tracking-[0.08em]" style={{ color: GREEN }}>Order total</span>
-            <div className="mt-0.5 font-mono text-[20px] font-bold tracking-[-0.02em]" style={{ color: GREEN }}>
-              ₹{orderTotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+          {/* Order-level discount */}
+          <div>
+            <label className="label">Order discount (optional)</label>
+            <div className="flex items-center gap-1.5">
+              <input
+                className="input px-2 text-right"
+                style={{ maxWidth: 120 }}
+                type="number"
+                step="0.01"
+                min="0"
+                value={orderDiscountValue}
+                onChange={(e) => setOrderDiscountValue(e.target.value)}
+                placeholder="0"
+              />
+              <DiscountTypeToggle value={orderDiscountType} onChange={setOrderDiscountType} />
+              <span className="text-[11.5px] text-ink-400">applied across the whole invoice</span>
+            </div>
+          </div>
+
+          {/* Order Total panel */}
+          <div className="rounded-xl border border-[var(--border)] p-4">
+            <TotalRow label="Subtotal (list)" value={formatCurrency(totals.listSubtotal, currency)} />
+            {totals.lineDiscount > 0 && (
+              <TotalRow label="Line discounts" value={`−${formatCurrency(totals.lineDiscount, currency)}`} negative />
+            )}
+            {totals.orderDiscount > 0 && (
+              <TotalRow label="Order discount" value={`−${formatCurrency(totals.orderDiscount, currency)}`} negative />
+            )}
+            <div className="mt-2 flex items-center justify-between border-t border-[var(--border)] pt-2.5">
+              <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: GREEN }}>Net total</span>
+              <span className="font-mono text-[20px] font-bold tracking-[-0.02em]" style={{ color: GREEN }}>{formatCurrency(totals.netTotal, currency)}</span>
             </div>
           </div>
           {error && <p className="text-sm text-risk-500">{error}</p>}
@@ -359,13 +494,23 @@ function SaleFormDrawer({
   );
 }
 
+function TotalRow({ label, value, negative }: { label: string; value: string; negative?: boolean }) {
+  return (
+    <div className="flex items-center justify-between py-0.5 text-[12.5px]">
+      <span className="text-ink-500">{label}</span>
+      <span className="font-mono font-semibold" style={{ color: negative ? RED : "oklch(0.3 0.01 260)" }}>{value}</span>
+    </div>
+  );
+}
+
 // ---- CSV import ------------------------------------------------------------
 // The optional `invoice` column groups rows into one multi-product order; rows
-// without an invoice id each import as their own single-line order.
-const TEMPLATE_CSV = `invoice,sku,quantity,date,unit_price,channel,customer
-INV-1001,MIX-BASIN-EL,120,2026-06-01,1420,retail,Sharma Traders
-INV-1001,MIX-BASIN-PR,45,2026-06-01,1790,retail,Sharma Traders
-INV-1002,MIX-BASIN-EC,200,2026-06-05,999,online,`;
+// without an invoice id each import as their own single-line order. Optional
+// discount columns capture per-line and invoice-wide reductions.
+const TEMPLATE_CSV = `invoice,sku,quantity,date,unit_price,line_discount,line_discount_type,order_discount,order_discount_type,channel,customer
+INV-1001,MIX-BASIN-EL,120,2026-06-01,1420,5,percent,10,percent,retail,Sharma Traders
+INV-1001,MIX-BASIN-PR,45,2026-06-01,1790,,,10,percent,retail,Sharma Traders
+INV-1002,MIX-BASIN-EC,200,2026-06-05,999,50,flat,,,online,`;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -518,7 +663,7 @@ function SaleImportDrawer({ onClose, onImported }: { onClose: () => void; onImpo
                     {c}
                   </code>
                 ))}
-                {["channel", "customer", "invoice"].map((c) => (
+                {["channel", "customer", "invoice", "line_discount", "line_discount_type", "order_discount", "order_discount_type"].map((c) => (
                   <code key={c} className="inline-flex items-center gap-1 rounded-md border border-dashed border-ink-200 bg-white px-2 py-1 font-mono text-[11px] text-ink-400">
                     {c}
                     <span className="text-[9px] uppercase tracking-[0.05em]">opt</span>

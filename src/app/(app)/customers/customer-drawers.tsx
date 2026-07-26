@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Plus, Pencil, Loader2, Archive, RotateCcw, Mail, Phone, MapPin, Building2 } from "lucide-react";
+import { Plus, Pencil, Loader2, Archive, RotateCcw, Mail, Phone, MapPin, Building2, Percent } from "lucide-react";
 import { Drawer, DrawerBody, DrawerCloseButton, DrawerFooter, DrawerHeader, DrawerSkeleton } from "@/components/drawer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "@/components/toaster";
@@ -39,6 +39,7 @@ export type CustomerInitial = {
   gstin: string | null;
   city: string | null;
   notes: string | null;
+  defaultDiscountPct: number | null;
 };
 
 // ---- pub/sub (mirrors costs/cost-drawer.tsx) -------------------------------
@@ -173,6 +174,7 @@ function CustomerFormDrawer({
   const [gstin, setGstin] = useState("");
   const [city, setCity] = useState("");
   const [notes, setNotes] = useState("");
+  const [defaultDiscount, setDefaultDiscount] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<"name" | "email" | "phone" | "gstin", string | null>>({
@@ -194,6 +196,7 @@ function CustomerFormDrawer({
       setGstin(initial.gstin ?? "");
       setCity(initial.city ?? "");
       setNotes(initial.notes ?? "");
+      setDefaultDiscount(initial.defaultDiscountPct != null ? String(initial.defaultDiscountPct) : "");
     } else {
       setName("");
       setEmail("");
@@ -202,6 +205,7 @@ function CustomerFormDrawer({
       setGstin("");
       setCity("");
       setNotes("");
+      setDefaultDiscount("");
     }
   }, [open, mode, initial]);
 
@@ -227,6 +231,7 @@ function CustomerFormDrawer({
     fd.set("gstin", gstin);
     fd.set("city", city);
     fd.set("notes", notes);
+    fd.set("defaultDiscountPct", defaultDiscount);
 
     const res = await (mode === "create" ? createCustomer : updateCustomer)(undefined, fd);
     setSaving(false);
@@ -303,18 +308,34 @@ function CustomerFormDrawer({
               <input className="input" value={city} onChange={(e) => setCity(e.target.value)} placeholder="Mumbai" />
             </div>
           </div>
-          <div>
-            <label className="label">GSTIN (optional)</label>
-            <input
-              className={`input ${fieldErrors.gstin ? "border-risk-500" : ""}`}
-              value={gstin}
-              onChange={(e) => {
-                setGstin(e.target.value);
-                if (fieldErrors.gstin) setFieldErrors((p) => ({ ...p, gstin: null }));
-              }}
-              placeholder="27AAAAA0000A1Z5"
-            />
-            {fieldErrors.gstin && <p className="mt-1 text-[12px] text-risk-500">{fieldErrors.gstin}</p>}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">GSTIN (optional)</label>
+              <input
+                className={`input ${fieldErrors.gstin ? "border-risk-500" : ""}`}
+                value={gstin}
+                onChange={(e) => {
+                  setGstin(e.target.value);
+                  if (fieldErrors.gstin) setFieldErrors((p) => ({ ...p, gstin: null }));
+                }}
+                placeholder="27AAAAA0000A1Z5"
+              />
+              {fieldErrors.gstin && <p className="mt-1 text-[12px] text-risk-500">{fieldErrors.gstin}</p>}
+            </div>
+            <div>
+              <label className="label">Default discount %</label>
+              <input
+                className="input text-right"
+                type="number"
+                step="0.01"
+                min="0"
+                max="100"
+                value={defaultDiscount}
+                onChange={(e) => setDefaultDiscount(e.target.value)}
+                placeholder="0"
+              />
+              <p className="mt-1 text-[11px] text-ink-400">Pre-fills the order discount on new sales.</p>
+            </div>
           </div>
           <div>
             <label className="label">Notes (optional)</label>
@@ -366,7 +387,7 @@ function CustomerPreviewDrawer({
   }, [open, id]);
 
   const initial: CustomerInitial | null = data
-    ? { id: data.id, name: data.name, email: data.email, phone: data.phone, channel: data.channel, gstin: data.gstin, city: data.city, notes: data.notes }
+    ? { id: data.id, name: data.name, email: data.email, phone: data.phone, channel: data.channel, gstin: data.gstin, city: data.city, notes: data.notes, defaultDiscountPct: data.defaultDiscountPct }
     : null;
 
   return (
@@ -427,12 +448,15 @@ function CustomerPreviewDrawer({
               <Stat label="Revenue" value={formatCurrency(data.revenue, data.currency)} accent />
             </div>
 
-            {(data.email || data.phone || data.gstin) && (
+            {(data.email || data.phone || data.gstin || data.defaultDiscountPct != null) && (
               <div className="mb-5 space-y-2 rounded-xl border border-[var(--border)] p-4">
                 {data.email && <ContactRow icon={<Mail className="h-3.5 w-3.5" />} text={data.email} />}
                 {data.phone && <ContactRow icon={<Phone className="h-3.5 w-3.5" />} text={data.phone} />}
                 {data.city && <ContactRow icon={<MapPin className="h-3.5 w-3.5" />} text={data.city} />}
                 {data.gstin && <ContactRow icon={<Building2 className="h-3.5 w-3.5" />} text={data.gstin} />}
+                {data.defaultDiscountPct != null && (
+                  <ContactRow icon={<Percent className="h-3.5 w-3.5" />} text={`${data.defaultDiscountPct}% standing discount`} />
+                )}
               </div>
             )}
 

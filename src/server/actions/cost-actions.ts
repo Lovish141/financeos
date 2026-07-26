@@ -52,6 +52,70 @@ export async function createMasterCost(
   return { ok: true };
 }
 
+/**
+ * Create a price-book item and return it, so a caller that isn't on /costs can
+ * use it immediately. Powers the "New component" dialog inside the product form
+ * drawer: the user adds a missing component inline instead of abandoning the
+ * half-filled product to visit Master Costs. Same validation as
+ * {@link createMasterCost}; takes a plain object since it's called
+ * programmatically rather than as a form action.
+ */
+export interface CreatedMasterCost {
+  id: string;
+  name: string;
+  type: CostType;
+  unit: string;
+  currentCost: number;
+}
+
+export async function createMasterCostInline(input: {
+  name: string;
+  category?: string;
+  type: string;
+  unit: string;
+  currentCost: number;
+}): Promise<{ ok: true; item: CreatedMasterCost } | { ok: false; error: string }> {
+  const { db, role, userId, companyId } = await requireStaff();
+  assertCanEdit(role);
+
+  const parsed = costSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.errors[0]?.message ?? "Invalid cost item." };
+  const data = parsed.data;
+
+  if (!validTypeUnit(data.type, data.unit)) {
+    return { ok: false, error: `Unit "${data.unit}" isn't valid for a ${TYPE_LABELS[data.type]}.` };
+  }
+
+  // Warn on an exact-name clash rather than silently creating a duplicate the
+  // user will later struggle to tell apart in the picker.
+  const clash = await db.masterCost.findFirst({
+    where: { name: { equals: data.name.trim(), mode: "insensitive" }, archived: false },
+    select: { id: true },
+  });
+  if (clash) return { ok: false, error: `A cost item named “${data.name.trim()}” already exists.` };
+
+  const created = await db.masterCost.create({
+    data: {
+      companyId,
+      name: data.name.trim(),
+      category: data.category?.trim() || null,
+      type: data.type,
+      unit: data.unit.toLowerCase(),
+      currentCost: data.currentCost,
+      history: {
+        create: { oldValue: null, newValue: data.currentCost, changedById: userId },
+      },
+    },
+    select: { id: true, name: true, type: true, unit: true, currentCost: true },
+  });
+
+  // The new item belongs in every picker that reads the price book.
+  revalidatePath("/costs");
+  revalidatePath("/products");
+  revalidatePath("/templates");
+  return { ok: true, item: created };
+}
+
 export async function updateMasterCost(
   _prev: ActionResult,
   formData: FormData,
