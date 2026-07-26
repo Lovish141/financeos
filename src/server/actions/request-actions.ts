@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireStaff, assertCanEdit } from "@/lib/session";
 import { toRequestView, type RequestView } from "@/server/request-view";
+import { parseNotes, makeNote } from "@/lib/request-notes";
 import type { ActionResult } from "./cost-actions";
 import type { OrderRequestStatus, Prisma, SalesChannel } from "@prisma/client";
 
@@ -128,11 +129,13 @@ const approveLineSchema = z.object({
 });
 
 export async function approveRequest(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  const { db, role, companyId, userId } = await requireStaff();
+  const { db, role, companyId, userId, name } = await requireStaff();
   assertCanEdit(role);
 
   const id = String(formData.get("id") || "");
   if (!id) return { error: "Missing request id." };
+
+  const staffNote = makeNote("STAFF", name, String(formData.get("note") || ""));
 
   let linesParsed;
   try {
@@ -150,6 +153,9 @@ export async function approveRequest(_prev: ActionResult, formData: FormData): P
   });
   if (!req) return { error: "Request not found." };
   if (!OPEN_STATUSES.includes(req.status)) return { error: "This request has already been decided." };
+
+  const notes = parseNotes(req.notes);
+  if (staffNote) notes.push(staffNote);
 
   // Every referenced product must belong to this tenant.
   const productIds = [...new Set(lines.map((l) => l.productId))];
@@ -217,8 +223,11 @@ export async function approveRequest(_prev: ActionResult, formData: FormData): P
         }
       }
 
-      // 3. Link the booked order back to the request.
-      await tx.orderRequest.update({ where: { id }, data: { orderId: order.id } });
+      // 3. Link the booked order back to the request (and record any note).
+      await tx.orderRequest.update({
+        where: { id },
+        data: { orderId: order.id, notes: notes as unknown as Prisma.InputJsonValue },
+      });
     });
   } catch (e) {
     if (e instanceof AlreadyDecidedError) return { error: "This request has already been decided." };
@@ -239,15 +248,21 @@ async function decide(
   status: Extract<OrderRequestStatus, "REJECTED" | "CHANGES_REQUESTED">,
   note: string | undefined,
 ): Promise<ActionResult> {
-  const { db, role, userId } = await requireStaff();
+  const { db, role, userId, name } = await requireStaff();
   assertCanEdit(role);
+
+  const req = await db.orderRequest.findFirst({ where: { id }, select: { notes: true } });
+  if (!req) return { error: "Request not found." };
+  const notes = parseNotes(req.notes);
+  const entry = makeNote("STAFF", name, note ?? "");
+  if (entry) notes.push(entry);
 
   // Atomic guard — only transition a request that is still open.
   const upd = await db.orderRequest.updateMany({
     where: { id, status: { in: OPEN_STATUSES } },
     data: {
       status,
-      reviewNote: (note ?? "").trim() || null,
+      notes: notes as unknown as Prisma.InputJsonValue,
       // CHANGES_REQUESTED goes back to the buyer, so it isn't a final decision.
       decidedAt: status === "REJECTED" ? new Date() : null,
       decidedById: status === "REJECTED" ? userId : null,
@@ -266,4 +281,24 @@ export async function rejectRequest(id: string, note?: string): Promise<ActionRe
 
 export async function requestChanges(id: string, note?: string): Promise<ActionResult> {
   return decide(id, "CHANGES_REQUESTED", note);
+}
+
+/** Post a message to a request's thread without changing its status. */
+export async function postStaffNote(id: string, text: string): Promise<ActionResult> {
+  const { db, role, name } = await requireStaff();
+  assertCanEdit(role);
+
+  const entry = makeNote("STAFF", name, text);
+  if (!entry) return { error: "Write a message first." };
+
+  const req = await db.orderRequest.findFirst({ where: { id }, select: { notes: true } });
+  if (!req) return { error: "Request not found." };
+
+  const notes = parseNotes(req.notes);
+  notes.push(entry);
+  await db.orderRequest.update({ where: { id }, data: { notes: notes as unknown as Prisma.InputJsonValue } });
+
+  revalidatePath("/requests");
+  revalidatePath("/portal/orders");
+  return { ok: true };
 }

@@ -2,10 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Plus, Minus, ShoppingCart, Loader2, Trash2, Package } from "lucide-react";
+import { Search, Plus, Minus, ShoppingCart, Loader2, Trash2, Package, Check, X } from "lucide-react";
 import { submitOrderRequest, type CatalogProduct } from "@/server/actions/buyer-actions";
+import { Drawer, DrawerBody, DrawerFooter, DrawerHeader } from "@/components/drawer";
 import { toast } from "@/components/toaster";
 import { EmptyState } from "@/components/ui";
+import { categoryColor, cn } from "@/lib/utils";
 
 function useMoney(currency: string) {
   return useMemo(
@@ -14,23 +16,63 @@ function useMoney(currency: string) {
   );
 }
 
+const ALL = "__all__";
+
+/** Monogram tile standing in for a product photo — tinted by its series. */
+function ProductThumb({ product }: { product: CatalogProduct }) {
+  const c = categoryColor(product.seriesName || product.name);
+  const initials = product.name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+  return (
+    <div
+      className="relative flex h-20 items-center justify-center overflow-hidden"
+      style={{ background: `linear-gradient(135deg, ${c.bg}, oklch(0.99 0.004 240))` }}
+    >
+      <span className="text-[22px] font-extrabold tracking-[-0.03em]" style={{ color: c.color }}>
+        {initials || <Package className="h-6 w-6" strokeWidth={1.7} />}
+      </span>
+    </div>
+  );
+}
+
 export function CatalogOrder({ catalog, currency }: { catalog: CatalogProduct[]; currency: string }) {
   const router = useRouter();
   const money = useMoney(currency);
   const [q, setQ] = useState("");
+  const [series, setSeries] = useState<string>(ALL);
   const [cart, setCart] = useState<Record<string, number>>({}); // productId -> qty
+  const [cartOpen, setCartOpen] = useState(false);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Distinct series → the storefront's category filter.
+  const seriesList = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of catalog) if (p.seriesName?.trim()) set.add(p.seriesName.trim());
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [catalog]);
+
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    if (!term) return catalog;
-    return catalog.filter((p) => p.name.toLowerCase().includes(term) || p.sku.toLowerCase().includes(term));
-  }, [catalog, q]);
+    return catalog.filter((p) => {
+      if (series !== ALL && (p.seriesName?.trim() || "") !== series) return false;
+      if (!term) return true;
+      return (
+        p.name.toLowerCase().includes(term) ||
+        p.sku.toLowerCase().includes(term) ||
+        (p.productCode?.toLowerCase().includes(term) ?? false)
+      );
+    });
+  }, [catalog, q, series]);
 
   const byId = useMemo(() => new Map(catalog.map((p) => [p.id, p])), [catalog]);
   const cartLines = Object.entries(cart).filter(([, qty]) => qty > 0);
+  const cartCount = cartLines.reduce((s, [, qty]) => s + qty, 0);
   const cartTotal = cartLines.reduce((s, [id, qty]) => s + (byId.get(id)?.sellingPrice ?? 0) * qty, 0);
 
   function setQty(id: string, qty: number) {
@@ -65,125 +107,221 @@ export function CatalogOrder({ catalog, currency }: { catalog: CatalogProduct[];
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-      {/* Catalog list */}
-      <div>
-        <div className="relative mb-4">
-          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-ink-400" />
-          <input
-            className="input pl-10"
-            placeholder="Search products by name or SKU…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
+    <>
+      {/* Sticky toolbar: search + category chips + cart trigger */}
+      <div className="sticky top-[62px] z-20 -mx-5 mb-5 border-b border-[var(--border)] bg-[oklch(0.985_0.003_240)]/85 px-5 py-3 backdrop-blur-md sm:-mx-8 sm:px-8">
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-ink-400" />
+            <input
+              className="input pl-10"
+              placeholder="Search products by name, SKU or code…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setCartOpen(true)}
+            className="btn-primary relative shrink-0"
+          >
+            <ShoppingCart className="h-4 w-4" />
+            <span className="hidden sm:inline">Cart</span>
+            {cartCount > 0 && (
+              <span className="ml-0.5 inline-flex min-w-[20px] items-center justify-center rounded-full bg-white/25 px-1.5 text-[11px] font-bold tabular-nums">
+                {cartCount}
+              </span>
+            )}
+          </button>
         </div>
-        <div className="space-y-2">
+
+        {seriesList.length > 0 && (
+          <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-0.5">
+            <CategoryChip label="All" active={series === ALL} onClick={() => setSeries(ALL)} />
+            {seriesList.map((s) => (
+              <CategoryChip key={s} label={s} active={series === s} onClick={() => setSeries(s)} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Product grid */}
+      {filtered.length === 0 ? (
+        <div className="card px-6 py-14 text-center text-sm text-ink-400">
+          No products match your search.
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {filtered.map((p) => {
             const qty = cart[p.id] ?? 0;
+            const c = categoryColor(p.seriesName || p.name);
             return (
-              <div
-                key={p.id}
-                className="card flex items-center gap-4 p-4"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[14.5px] font-semibold text-ink-900">{p.name}</div>
-                  <div className="mt-0.5 font-mono text-[11px] text-ink-400">{p.sku}</div>
+              <div key={p.id} className={cn("card flex flex-col overflow-hidden p-0 transition-shadow hover:shadow-card", qty > 0 && "ring-2 ring-brand-300")}>
+                <div className="relative">
+                  <ProductThumb product={p} />
+                  {p.seriesName && (
+                    <span
+                      className="absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                      style={{ background: c.bg, color: c.color }}
+                    >
+                      {p.seriesName}
+                    </span>
+                  )}
                 </div>
-                <div className="shrink-0 text-right">
-                  <div className="text-[14px] font-bold text-ink-900">{money.format(p.sellingPrice)}</div>
-                  <div className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-400">list price</div>
-                </div>
-                {qty > 0 ? (
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <button type="button" onClick={() => bump(p.id, -1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-ink-200 text-ink-600 transition-colors hover:bg-ink-100">
-                      <Minus className="h-4 w-4" />
-                    </button>
-                    <input
-                      className="input h-8 w-14 px-1 text-center"
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={qty}
-                      onChange={(e) => setQty(p.id, Number(e.target.value))}
-                    />
-                    <button type="button" onClick={() => bump(p.id, 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-ink-200 text-ink-600 transition-colors hover:bg-ink-100">
-                      <Plus className="h-4 w-4" />
-                    </button>
+                <div className="flex flex-1 flex-col p-3.5">
+                  <div className="min-h-[34px] text-[13.5px] font-semibold leading-tight text-ink-900">
+                    {p.name}
                   </div>
-                ) : (
-                  <button type="button" onClick={() => bump(p.id, 1)} className="btn-ghost shrink-0">
-                    <Plus className="h-4 w-4" /> Add
-                  </button>
-                )}
+                  <div className="mt-1 font-mono text-[10.5px] text-ink-400">{p.productCode || p.sku}</div>
+                  <div className="mt-2.5 flex items-baseline gap-1">
+                    <span className="text-[15px] font-bold text-ink-900">{money.format(p.sellingPrice)}</span>
+                    <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-ink-400">/ unit</span>
+                  </div>
+
+                  <div className="mt-3">
+                    {qty > 0 ? (
+                      <div className="flex items-center justify-between gap-1.5">
+                        <button type="button" onClick={() => bump(p.id, -1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-ink-200 text-ink-600 transition-colors hover:bg-ink-100">
+                          <Minus className="h-4 w-4" />
+                        </button>
+                        <input
+                          className="input h-8 w-full px-1 text-center"
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={qty}
+                          onChange={(e) => setQty(p.id, Number(e.target.value))}
+                        />
+                        <button type="button" onClick={() => bump(p.id, 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-ink-200 text-ink-600 transition-colors hover:bg-ink-100">
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => bump(p.id, 1)} className="btn-ghost w-full justify-center">
+                        <Plus className="h-4 w-4" /> Add
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             );
           })}
-          {filtered.length === 0 && (
-            <div className="card px-6 py-10 text-center text-sm text-ink-400">No products match “{q}”.</div>
-          )}
         </div>
-      </div>
+      )}
 
-      {/* Cart */}
-      <div className="lg:sticky lg:top-[86px] lg:self-start">
-        <div className="card p-5">
-          <div className="mb-3 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-500">
-            <ShoppingCart className="h-4 w-4" /> Your request
+      {/* Cart slide-in */}
+      <Drawer open={cartOpen} onClose={() => setCartOpen(false)} width={440}>
+        <DrawerHeader onClose={() => setCartOpen(false)}>
+          <div className="flex items-center gap-2.5">
+            <ShoppingCart className="h-[18px] w-[18px] text-brand-600" />
+            <h3 className="text-[17px] font-extrabold tracking-[-0.02em] text-ink-900">Your request</h3>
           </div>
+          <p className="mt-1 text-[12.5px] text-ink-500">
+            {cartCount === 0 ? "Nothing added yet" : `${cartCount} item${cartCount !== 1 ? "s" : ""} across ${cartLines.length} product${cartLines.length !== 1 ? "s" : ""}`}
+          </p>
+        </DrawerHeader>
+
+        <DrawerBody>
           {cartLines.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-ink-400">Add products to build your request.</p>
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-ink-50 text-ink-300">
+                <ShoppingCart className="h-6 w-6" strokeWidth={1.6} />
+              </div>
+              <p className="max-w-[220px] text-[13px] text-ink-400">
+                Browse the catalog and add products to build your request.
+              </p>
+            </div>
           ) : (
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               {cartLines.map(([id, qty]) => {
                 const p = byId.get(id)!;
                 return (
-                  <div key={id} className="flex items-center gap-2 text-[13px]">
+                  <div key={id} className="flex items-center gap-3">
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium text-ink-800">{p.name}</div>
-                      <div className="font-mono text-[10.5px] text-ink-400">
-                        {qty} × {money.format(p.sellingPrice)}
-                      </div>
+                      <div className="truncate text-[13px] font-semibold text-ink-800">{p.name}</div>
+                      <div className="font-mono text-[10.5px] text-ink-400">{money.format(p.sellingPrice)} / unit</div>
                     </div>
-                    <span className="shrink-0 font-semibold text-ink-900">{money.format(p.sellingPrice * qty)}</span>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button type="button" onClick={() => bump(id, -1)} className="flex h-7 w-7 items-center justify-center rounded-lg border border-ink-200 text-ink-600 transition-colors hover:bg-ink-100">
+                        <Minus className="h-3.5 w-3.5" />
+                      </button>
+                      <input
+                        className="input h-7 w-12 px-1 text-center text-[13px]"
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={qty}
+                        onChange={(e) => setQty(id, Number(e.target.value))}
+                      />
+                      <button type="button" onClick={() => bump(id, 1)} className="flex h-7 w-7 items-center justify-center rounded-lg border border-ink-200 text-ink-600 transition-colors hover:bg-ink-100">
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="w-[68px] shrink-0 text-right text-[13px] font-bold text-ink-900">
+                      {money.format(p.sellingPrice * qty)}
+                    </div>
                     <button type="button" onClick={() => setQty(id, 0)} title="Remove" className="shrink-0 text-ink-300 transition-colors hover:text-risk-500">
                       <Trash2 className="h-[15px] w-[15px]" />
                     </button>
                   </div>
                 );
               })}
-              <div className="mt-2 flex items-center justify-between border-t border-ink-100 pt-3">
-                <span className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink-500">Est. total</span>
-                <span className="text-[17px] font-extrabold tracking-[-0.02em] text-ink-900">{money.format(cartTotal)}</span>
+
+              <div className="border-t border-ink-100 pt-4">
+                <label className="label">Note to supplier (optional)</label>
+                <textarea
+                  className="input min-h-[68px] resize-y"
+                  placeholder="Delivery timing, packaging, anything they should know…"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                />
               </div>
+
               <p className="text-[11px] leading-relaxed text-ink-400">
-                Indicative — your supplier confirms final pricing on approval.
+                Prices are indicative — your supplier confirms final pricing when they approve.
               </p>
+
+              {error && <p className="text-sm text-risk-500">{error}</p>}
             </div>
           )}
+        </DrawerBody>
 
-          <div className="mt-4">
-            <label className="label">Note (optional)</label>
-            <textarea
-              className="input min-h-[68px] resize-y"
-              placeholder="Anything your supplier should know…"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
+        <DrawerFooter className="flex-col items-stretch gap-3">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink-500">Est. total</span>
+            <span className="text-[19px] font-extrabold tracking-[-0.02em] text-ink-900">{money.format(cartTotal)}</span>
           </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setCartOpen(false)} className="btn-ghost shrink-0">
+              <X className="h-4 w-4" /> Keep browsing
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={saving || cartLines.length === 0}
+              className="btn-primary flex-1 justify-center"
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              {saving ? "Submitting…" : "Submit request"}
+            </button>
+          </div>
+        </DrawerFooter>
+      </Drawer>
+    </>
+  );
+}
 
-          {error && <p className="mt-3 text-sm text-risk-500">{error}</p>}
-
-          <button
-            type="button"
-            onClick={submit}
-            disabled={saving || cartLines.length === 0}
-            className="btn-primary mt-4 w-full justify-center"
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShoppingCart className="h-4 w-4" />}
-            {saving ? "Submitting…" : "Submit request"}
-          </button>
-        </div>
-      </div>
-    </div>
+function CategoryChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors",
+        active ? "border-transparent bg-ink-800 text-white" : "border-ink-200 bg-white text-ink-600 hover:bg-ink-50",
+      )}
+    >
+      {label}
+    </button>
   );
 }

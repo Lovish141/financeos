@@ -6,7 +6,7 @@ import { requireStaff, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { affectedProducts } from "@/server/costing-service";
 import { snapshotProducts } from "@/server/product-history";
-import { validTypeUnit, TYPE_LABELS, parseMasterCostCsv } from "@/lib/csv";
+import { parseMasterCostCsv } from "@/lib/csv";
 import type { CostType, Prisma } from "@prisma/client";
 
 export type ActionResult = { error?: string; ok?: boolean } | undefined;
@@ -29,10 +29,6 @@ export async function createMasterCost(
   const parsed = costSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.errors[0]?.message };
   const data = parsed.data;
-
-  if (!validTypeUnit(data.type, data.unit)) {
-    return { error: `Unit "${data.unit}" isn't valid for a ${TYPE_LABELS[data.type]}.` };
-  }
 
   await db.masterCost.create({
     data: {
@@ -82,10 +78,6 @@ export async function createMasterCostInline(input: {
   if (!parsed.success) return { ok: false, error: parsed.error.errors[0]?.message ?? "Invalid cost item." };
   const data = parsed.data;
 
-  if (!validTypeUnit(data.type, data.unit)) {
-    return { ok: false, error: `Unit "${data.unit}" isn't valid for a ${TYPE_LABELS[data.type]}.` };
-  }
-
   // Warn on an exact-name clash rather than silently creating a duplicate the
   // user will later struggle to tell apart in the picker.
   const clash = await db.masterCost.findFirst({
@@ -127,10 +119,6 @@ export async function updateMasterCost(
   const parsed = costSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.errors[0]?.message };
   const data = parsed.data;
-
-  if (!validTypeUnit(data.type, data.unit)) {
-    return { error: `Unit "${data.unit}" isn't valid for a ${TYPE_LABELS[data.type]}.` };
-  }
 
   const existing = await db.masterCost.findFirst({
     where: { id },

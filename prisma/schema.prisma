@@ -511,8 +511,10 @@ model OrderRequest {
   createdBy   User?   @relation("RequestCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   status     OrderRequestStatus @default(DRAFT)
-  buyerNote  String?  // optional message from the buyer with the request
-  reviewNote String?  // staff message on reject / changes-requested
+  // Threaded buyer↔staff communication. An array of RequestNote objects
+  // ({ id, from: BUYER|STAFF, authorName, text, at }); see lib/request-notes.ts.
+  // Supersedes the old single buyerNote / reviewNote strings.
+  notes      Json @default("[]")
 
   submittedAt DateTime?
   decidedAt   DateTime?

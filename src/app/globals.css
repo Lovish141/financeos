@@ -14,6 +14,13 @@ body {
   height: 100%;
 }
 
+/* Always reserve the vertical scrollbar's space so a short page and a tall
+   (scrolling) page have the same content width. Without this, expanding a
+   collapsible re-centers `mx-auto` layouts and elements jump horizontally. */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   background: var(--bg);
   color: oklch(0.25 0.01 260);

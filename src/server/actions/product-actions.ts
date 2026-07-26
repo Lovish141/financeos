@@ -7,6 +7,7 @@ import { requireStaff, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import {
   marginHealth,
+  isPercentOfSalesUnit,
   type ProductComp,
   type MarginHealth,
 } from "@/lib/costing";
@@ -254,6 +255,57 @@ export async function updateProduct(
   return { ok: true };
 }
 
+/**
+ * Duplicate a product into a new DRAFT SKU. Copies the recipe (comps), template
+ * link, price and catalogue fields verbatim, mints a fresh unique SKU, and lays
+ * down a baseline CREATED history row — same shape as createProduct.
+ */
+export async function cloneProduct(id: string): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const { db, role, userId, companyId } = await requireStaff();
+  assertCanEdit(role);
+
+  const source = await db.product.findFirst({
+    where: { id },
+    select: {
+      name: true,
+      sku: true,
+      productCode: true,
+      seriesName: true,
+      templateId: true,
+      templateVersionId: true,
+      comps: true,
+      sellingPrice: true,
+    },
+  });
+  if (!source) return { ok: false, error: "Product not found." };
+
+  const sku = await uniqueSku(db, `${source.sku}-copy`);
+
+  const clone = await db.$transaction(async (tx) => {
+    const product = await tx.product.create({
+      data: {
+        companyId,
+        name: `${source.name} (copy)`,
+        sku,
+        productCode: source.productCode,
+        seriesName: source.seriesName,
+        templateId: source.templateId,
+        templateVersionId: source.templateVersionId,
+        comps: (source.comps ?? undefined) as object,
+        sellingPrice: source.sellingPrice,
+        status: "DRAFT",
+      },
+      include: { template: { select: { name: true, category: true } }, templateVersion: true },
+    });
+    await snapshotProducts(tx, [product], "CREATED", { actorId: userId });
+    return product;
+  });
+
+  revalidatePath("/products");
+  revalidatePath("/dashboard");
+  return { ok: true, id: clone.id };
+}
+
 export async function deleteProduct(id: string) {
   const { db, role } = await requireStaff();
   assertCanEdit(role);
@@ -342,7 +394,12 @@ export async function getProductBreakdown(id: string): Promise<ProductBreakdown 
         ? l.attentionReason === "archived"
           ? "Archived — excluded from total"
           : "Removed — excluded from total"
-        : `${l.quantity}${l.lineType === "WEIGHT" ? " " + weightUnit : " " + l.unit} × ${formatCurrency(l.unitCost, currency)}`,
+        : isPercentOfSalesUnit(l.unit)
+          ? // Show the rate as a % of the selling price (× qty when not 1).
+            `${l.quantity !== 1 ? `${l.quantity} × ` : ""}${
+              product.sellingPrice > 0 ? Math.round((l.unitCost / product.sellingPrice) * 10000) / 100 : 0
+            }% of sales`
+          : `${l.quantity}${l.lineType === "WEIGHT" ? " " + weightUnit : " " + l.unit} × ${formatCurrency(l.unitCost, currency)}`,
       lineCost: l.lineCost,
       sharePct: total > 0 ? Math.round((l.lineCost / total) * 100) : 0,
       archived: l.archived,

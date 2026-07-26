@@ -74,6 +74,20 @@ function round2(n: number): number {
 }
 
 /**
+ * Canonical unit for a cost expressed as a percentage of the product's selling
+ * price (e.g. a sales commission or royalty) rather than a flat per-unit amount.
+ * The master cost's `currentCost` holds the percentage value (5 = 5%).
+ */
+export const PERCENT_OF_SALES_UNIT = "% of sales";
+
+/** True when a cost line is a percentage of the selling price. Matched loosely
+ *  so minor label variants ("% of sale", "percent of sales") all count. */
+export function isPercentOfSalesUnit(unit: string | null | undefined): boolean {
+  const u = (unit ?? "").trim().toLowerCase();
+  return u === "% of sales" || u === "% of sale" || u === "percent of sales";
+}
+
+/**
  * Compute total cost + margin for a product against a recipe snapshot, resolving
  * every line live from `masterInfo`.
  *
@@ -94,7 +108,12 @@ export function computeProductCost(input: ComputeInput): CostResult {
     // Every line carries its own quantity — raw materials (WEIGHT) by weight,
     // components/services (FIXED) by count. A missing quantity contributes nothing.
     const quantity = line.quantity ?? 0;
-    const unitCost = excluded ? 0 : overrides?.[line.masterCostId] ?? info!.currentCost;
+    // The resolved value: live currentCost, or a hypothetical override (simulation).
+    // For a "% of sales" line this value is a percentage, so the effective unit
+    // cost is that percentage of the selling price; otherwise it's a flat amount.
+    const resolved = excluded ? 0 : overrides?.[line.masterCostId] ?? info!.currentCost;
+    const percentOfSales = !excluded && isPercentOfSalesUnit(info!.unit);
+    const unitCost = percentOfSales ? round2((resolved / 100) * sellingPrice) : resolved;
     const lineCost = round2(unitCost * quantity);
 
     return {

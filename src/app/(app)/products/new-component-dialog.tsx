@@ -4,22 +4,16 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, PackagePlus } from "lucide-react";
 import { toast } from "@/components/toaster";
-import { WEIGHT_UNITS, PIECE_UNITS } from "@/lib/csv";
+import { UnitInput } from "@/components/unit-input";
+import { isPercentOfSalesUnit } from "@/lib/costing";
 import { formatCurrency } from "@/lib/utils";
 import { createMasterCostInline, type CreatedMasterCost } from "@/server/actions/cost-actions";
 
 const TYPES: { value: string; label: string; hint: string }[] = [
-  { value: "RAW_MATERIAL", label: "Raw material", hint: "priced by weight" },
-  { value: "COMPONENT", label: "Component", hint: "priced per piece" },
-  { value: "SERVICE", label: "Service", hint: "priced per unit of work" },
+  { value: "RAW_MATERIAL", label: "Raw material", hint: "bulk input" },
+  { value: "COMPONENT", label: "Component", hint: "sub-part" },
+  { value: "SERVICE", label: "Service", hint: "labour / work" },
 ];
-
-const DEFAULT_UNIT: Record<string, string> = { RAW_MATERIAL: "kg", COMPONENT: "piece", SERVICE: "piece" };
-
-/** Units the price book accepts for a given type (mirrors `validTypeUnit`). */
-function unitsFor(type: string): string[] {
-  return type === "RAW_MATERIAL" ? WEIGHT_UNITS : PIECE_UNITS;
-}
 
 /**
  * Inline "add a missing component" dialog. Layered above the product form drawer
@@ -33,12 +27,15 @@ export function NewComponentDialog({
   currency,
   onClose,
   onCreated,
+  subject = "product",
 }: {
   open: boolean;
   currency: string;
   onClose: () => void;
   /** The freshly created price-book item, ready to add as a recipe line. */
   onCreated: (item: CreatedMasterCost) => void;
+  /** What the created item drops into — "product" (default) or "recipe". */
+  subject?: string;
 }) {
   const [mounted, setMounted] = useState(false);
   const [name, setName] = useState("");
@@ -72,10 +69,9 @@ export function NewComponentDialog({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, saving, onClose]);
 
-  // Switching type re-defaults the unit so the pair is always valid.
+  // Unit is a free choice, independent of type — switching type leaves it as-is.
   function onTypeChange(t: string) {
     setType(t);
-    setUnit(DEFAULT_UNIT[t] ?? "piece");
   }
 
   async function handleCreate() {
@@ -97,7 +93,13 @@ export function NewComponentDialog({
   if (!mounted || !open) return null;
 
   const costNum = parseFloat(cost);
-  const preview = Number.isFinite(costNum) && costNum >= 0 ? `${formatCurrency(costNum, currency)} / ${unit}` : null;
+  const isPct = isPercentOfSalesUnit(unit);
+  const preview =
+    Number.isFinite(costNum) && costNum >= 0
+      ? isPct
+        ? `${costNum}% of the selling price`
+        : `${formatCurrency(costNum, currency)} / ${unit}`
+      : null;
 
   return createPortal(
     <div
@@ -122,7 +124,7 @@ export function NewComponentDialog({
           </div>
           <h3 className="mb-1.5 text-[18px] font-extrabold tracking-[-0.02em] text-ink-900">New component</h3>
           <p className="mb-5 text-[13px] leading-[1.55] text-ink-500">
-            Adds a cost item to the price book and drops it straight into this product.
+            Adds a cost item to the price book and drops it straight into this {subject}.
           </p>
 
           <div className="space-y-3.5">
@@ -170,7 +172,7 @@ export function NewComponentDialog({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="label">Cost (₹)</label>
+                <label className="label">{isPct ? "Rate (%)" : "Cost (₹)"}</label>
                 <input
                   className="input text-right"
                   type="number"
@@ -178,17 +180,13 @@ export function NewComponentDialog({
                   min="0"
                   value={cost}
                   onChange={(e) => setCost(e.target.value)}
-                  placeholder="0"
+                  placeholder={isPct ? "e.g. 5" : "0"}
                 />
               </div>
               <div>
                 <label className="label">Unit</label>
-                {/* Only units valid for the chosen type, so an invalid pair is unreachable. */}
-                <select className="input" value={unit} onChange={(e) => setUnit(e.target.value)}>
-                  {unitsFor(type).map((u) => (
-                    <option key={u} value={u}>{u}</option>
-                  ))}
-                </select>
+                {/* Free-text with common suggestions — any custom unit is allowed. */}
+                <UnitInput value={unit} onChange={setUnit} placeholder="piece, kg, hour…" />
               </div>
             </div>
 

@@ -11,7 +11,7 @@ import {
   type ProductDraft,
 } from "@/server/actions/product-actions";
 import type { CreatedMasterCost } from "@/server/actions/cost-actions";
-import { qtyStepForUnit } from "@/lib/costing";
+import { qtyStepForUnit, isPercentOfSalesUnit } from "@/lib/costing";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { NewComponentDialog } from "./new-component-dialog";
 
@@ -155,12 +155,18 @@ export function ProductFormDrawer({
     setRows((prev) => [...prev, { masterCostId: id, qty: "1" }]);
   }
 
-  // Archived items are excluded from the total (counted as 0) — Live Reference.
-  const totalCost = rows.reduce((sum, r) => {
-    const m = meta(r.masterCostId);
-    return sum + (m.archived ? 0 : m.currentCost * (parseFloat(r.qty) || 0));
-  }, 0);
   const priceNum = parseFloat(price) || 0;
+
+  // Resolve one line's rupee cost. A "% of sales" item costs that percentage of
+  // the selling price; everything else is a flat per-unit amount. Archived items
+  // count as 0 (Live Reference). Mirrors computeProductCost in lib/costing.ts.
+  function lineCostOf(m: Meta, qty: number): number {
+    if (m.archived) return 0;
+    const unitCost = isPercentOfSalesUnit(m.unit) ? (m.currentCost / 100) * priceNum : m.currentCost;
+    return unitCost * qty;
+  }
+
+  const totalCost = rows.reduce((sum, r) => sum + lineCostOf(meta(r.masterCostId), parseFloat(r.qty) || 0), 0);
   const marginRs = priceNum - totalCost;
   const marginPct = priceNum > 0 ? (marginRs / priceNum) * 100 : 0;
 
@@ -276,7 +282,7 @@ export function ProductFormDrawer({
               )}
               {rows.map((r) => {
                 const m = meta(r.masterCostId);
-                const lineTotal = m.archived ? 0 : m.currentCost * (parseFloat(r.qty) || 0);
+                const lineTotal = lineCostOf(m, parseFloat(r.qty) || 0);
                 return (
                   <div key={r.masterCostId} className="flex items-center gap-2.5 border-b border-[oklch(0.96_0.003_250)] px-3.5 py-2.5 last:border-0">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: m.archived ? "oklch(0.7 0.1 65)" : TYPE_DOT[m.type] ?? TYPE_DOT.COMPONENT }} />
@@ -329,7 +335,7 @@ export function ProductFormDrawer({
                   <option value="">{addable.length === 0 ? "All components added" : "+ Add component…"}</option>
                   {addable.map((m) => (
                     <option key={m.id} value={m.id} title={m.name}>
-                      {m.name} — {formatCurrency(m.currentCost, currency)}/{m.unit}
+                      {m.name} — {isPercentOfSalesUnit(m.unit) ? `${m.currentCost}% of sales` : `${formatCurrency(m.currentCost, currency)}/${m.unit}`}
                     </option>
                   ))}
                 </select>

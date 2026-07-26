@@ -2,7 +2,8 @@
 
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, Copy, Loader2 } from "lucide-react";
+import { cloneTemplate } from "@/server/actions/template-actions";
 import { TemplatePreviewDrawer } from "./template-preview-drawer";
 import { TemplateFormDrawer, type MasterCostOption } from "./template-form-drawer";
 
@@ -44,6 +45,34 @@ export function TemplateEditButton({ id }: { id: string }) {
   return (
     <button type="button" className="icon-btn" title="Edit" onClick={() => openTemplateForm("edit", id)}>
       <Pencil className="h-[15px] w-[15px]" strokeWidth={1.9} />
+    </button>
+  );
+}
+
+/** Duplicate a template (recipe + version 1 snapshot), then refetch the grid. */
+export function TemplateCloneButton({ id }: { id: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      className="icon-btn"
+      title="Duplicate"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const res = await cloneTemplate(id);
+          if (res.ok) notifyTemplatesChanged();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? (
+        <Loader2 className="h-[15px] w-[15px] animate-spin" strokeWidth={1.9} />
+      ) : (
+        <Copy className="h-[15px] w-[15px]" strokeWidth={1.9} />
+      )}
     </button>
   );
 }

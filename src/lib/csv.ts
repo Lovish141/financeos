@@ -3,8 +3,36 @@ import type { CostType } from "@prisma/client";
 // Pure CSV parsing + master-cost row validation. Kept DB-free and framework-free
 // so it's unit-testable and reusable from the server action (Module 1).
 
-export const WEIGHT_UNITS = ["kg", "g", "ton", "lb", "quintal"];
-export const PIECE_UNITS = ["piece", "pcs", "unit", "set", "hour", "job", "litre", "sqft"];
+// The single source of truth for unit suggestions across the app (master-cost
+// creation, the inline "New component" dialog, CSV import docs). Units are NOT
+// restricted by cost type — these are only convenient suggestions; users may
+// type any custom unit they like.
+export const COMMON_UNITS = [
+  "piece",
+  "pcs",
+  "unit",
+  "set",
+  "pair",
+  "dozen",
+  "kg",
+  "g",
+  "ton",
+  "quintal",
+  "lb",
+  "litre",
+  "ml",
+  "metre",
+  "cm",
+  "sqft",
+  "sqm",
+  "hour",
+  "day",
+  "job",
+  // A cost expressed as a percentage of the product's selling price (e.g. a
+  // sales commission or royalty). The costing engine treats this specially —
+  // see PERCENT_OF_SALES_UNIT / isPercentOfSalesUnit in lib/costing.ts.
+  "% of sales",
+];
 
 export const TYPE_LABELS: Record<CostType, string> = {
   RAW_MATERIAL: "Raw material",
@@ -19,12 +47,6 @@ const TYPE_ALIASES: Record<string, CostType> = {
   component: "COMPONENT",
   service: "SERVICE",
 };
-
-export function validTypeUnit(type: CostType, unit: string): boolean {
-  const u = unit.toLowerCase();
-  if (type === "RAW_MATERIAL") return WEIGHT_UNITS.includes(u);
-  return PIECE_UNITS.includes(u);
-}
 
 /** RFC-4180-ish CSV parser: handles quoted fields, embedded commas, CRLF, and "" escapes. */
 export function parseCsv(text: string): string[][] {
@@ -110,10 +132,6 @@ export function parseMasterCostCsv(text: string): CsvParseOutcome {
     const type = TYPE_ALIASES[rawType];
     if (!type) { errors.push({ line, error: `Invalid type "${rawType}". Use raw_material, component, or service.` }); continue; }
     if (!unit) { errors.push({ line, error: "Missing unit." }); continue; }
-    if (!validTypeUnit(type, unit)) {
-      errors.push({ line, error: `Unit "${unit}" isn't valid for ${TYPE_LABELS[type]}.` });
-      continue;
-    }
     // A blank required cost is an omission, not a ₹0 cost — reject rather than
     // silently recording zero. An explicit "0" is still allowed.
     if (!costStr) { errors.push({ line, error: "Missing cost." }); continue; }
@@ -254,20 +272,22 @@ export function parseSalesCsv(text: string, now: Date = new Date()): SalesCsvOut
     }
     return -1;
   };
+  // Column names mirror the UI field labels (New sale drawer). Matching is
+  // case-insensitive (the header row is lowercased above).
   const iSku = col("sku");
-  const iQty = col("quantity", "qty", "units");
-  const iDate = col("date", "sold_at", "soldat");
-  const iPrice = col("unit_price", "unitprice", "price");
+  const iQty = col("qty");
+  const iDate = col("sale date");
+  const iPrice = col("list price");
   const iChannel = col("channel");
-  const iCustomer = col("customer", "account");
-  const iInvoice = col("invoice", "invoice_no", "invoice_id", "order", "order_id");
-  const iLineDisc = col("line_discount", "discount", "line_disc");
-  const iLineDiscType = col("line_discount_type", "discount_type", "line_disc_type");
-  const iOrderDisc = col("order_discount", "order_disc", "invoice_discount");
-  const iOrderDiscType = col("order_discount_type", "order_disc_type", "invoice_discount_type");
+  const iCustomer = col("customer");
+  const iInvoice = col("invoice");
+  const iLineDisc = col("discount");
+  const iLineDiscType = col("discount type");
+  const iOrderDisc = col("order discount");
+  const iOrderDiscType = col("order discount type");
 
   if (iSku < 0 || iQty < 0 || iDate < 0 || iPrice < 0) {
-    return { valid: [], errors: [], fatal: "Header must include: sku, quantity, date, unit_price (channel, customer optional)." };
+    return { valid: [], errors: [], fatal: "Header must include: SKU, Qty, Sale date, List price (Channel, Customer optional)." };
   }
 
   const valid: ParsedSaleRow[] = [];

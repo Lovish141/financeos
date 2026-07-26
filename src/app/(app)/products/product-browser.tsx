@@ -7,10 +7,10 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { marginHealth, HEALTH_COLOR } from "@/lib/costing";
 import { formatMoney, formatPercent } from "@/lib/utils";
 import { deleteProduct, searchProducts, type ProductListItem } from "@/server/actions/product-actions";
-import { NewProductButton, ProductRowOpen, ProductEditButton, onProductsChanged } from "./product-drawers";
+import { NewProductButton, ProductRowOpen, ProductEditButton, ProductCloneButton, onProductsChanged } from "./product-drawers";
 import { ProductHistoryCell } from "./product-history-cell";
 
-const GRID = "1.5fr 0.8fr 0.7fr 0.75fr 0.6fr 0.6fr 0.9fr 0.5fr 0.6fr 0.75fr 64px";
+const GRID = "1.5fr 0.8fr 0.7fr 0.75fr 0.6fr 0.6fr 0.9fr 0.5fr 0.6fr 0.75fr 102px";
 
 const STATUS_TABS: { value: string; label: string }[] = [
   { value: "", label: "All" },
@@ -205,6 +205,7 @@ export function ProductBrowser({
                 </div>
                 <div className="flex justify-end gap-1.5">
                   {editable && <ProductEditButton id={p.id} />}
+                  {editable && <ProductCloneButton id={p.id} />}
                   {editable && (
                     <ConfirmDialog
                       action={deleteProduct.bind(null, p.id)}

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus, Trash2, Loader2, Check, RotateCcw, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Plus, Trash2, Loader2, Check, RotateCcw, X, Send } from "lucide-react";
 import { Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerSkeleton } from "@/components/drawer";
 import { Badge } from "@/components/ui";
 import { toast } from "@/components/toaster";
@@ -12,8 +12,10 @@ import {
   approveRequest,
   rejectRequest,
   requestChanges,
+  postStaffNote,
   type RequestDetail,
 } from "@/server/actions/request-actions";
+import { NoteThread } from "@/components/note-thread";
 import type { ProductOption } from "../sales/sales-drawers";
 import type { OrderRequestStatus } from "@prisma/client";
 
@@ -46,35 +48,57 @@ export function ReviewDrawer({
   const [lines, setLines] = useState<EditLine[]>([]);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<null | "approve" | "reject" | "changes">(null);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!requestId) return;
-    setDetail(null);
-    setError(null);
-    setNote("");
+  const load = useCallback((id: string, seedLines: boolean) => {
     setLoading(true);
-    getRequestDetail(requestId).then((res) => {
+    return getRequestDetail(id).then((res) => {
       setLoading(false);
       if ("error" in res) {
         setError(res.error);
         return;
       }
       setDetail(res);
-      // Seed the editor from the buyer's requested lines.
-      setLines(
-        res.items
-          .filter((it) => !it.removed)
-          .map((it) => ({
-            key: nextKey(),
-            itemId: it.id,
-            productId: it.productId,
-            quantity: it.requestedQty != null ? String(it.requestedQty) : "",
-            unitPrice: it.requestedUnitPrice != null ? String(it.requestedUnitPrice) : "",
-          })),
-      );
+      // Seed the editor from the buyer's requested lines (first load only, so we
+      // don't stomp staff edits when refreshing the thread).
+      if (seedLines) {
+        setLines(
+          res.items
+            .filter((it) => !it.removed)
+            .map((it) => ({
+              key: nextKey(),
+              itemId: it.id,
+              productId: it.productId,
+              quantity: it.requestedQty != null ? String(it.requestedQty) : "",
+              unitPrice: it.requestedUnitPrice != null ? String(it.requestedUnitPrice) : "",
+            })),
+        );
+      }
     });
-  }, [requestId]);
+  }, []);
+
+  useEffect(() => {
+    if (!requestId) return;
+    setDetail(null);
+    setError(null);
+    setNote("");
+    void load(requestId, true);
+  }, [requestId, load]);
+
+  // Post the composer text to the thread now, without a status change. The same
+  // `note` field is also consumed by the approve/reject/request-changes buttons.
+  async function sendMessage() {
+    const t = note.trim();
+    if (!t || !detail) return;
+    setSending(true);
+    const res = await postStaffNote(detail.id, t);
+    setSending(false);
+    if (res?.error) return toast(res.error);
+    setNote("");
+    await load(detail.id, false);
+    onChanged();
+  }
 
   const open = requestId != null;
   const isOpenStatus = detail != null && OPEN.includes(detail.status);
@@ -125,6 +149,7 @@ export function ReviewDrawer({
         lines.map((l) => ({ itemId: l.itemId, productId: l.productId, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice) })),
       ),
     );
+    if (note.trim()) fd.set("note", note.trim());
     const res = await approveRequest(undefined, fd);
     setBusy(null);
     if (res?.error) return setError(res.error);
@@ -171,12 +196,6 @@ export function ReviewDrawer({
           )
         ) : (
           <div className="space-y-4">
-            {detail.buyerNote && (
-              <div className="rounded-[10px] bg-ink-50 px-4 py-3 text-[13px] text-ink-600">
-                <span className="font-semibold text-ink-700">Buyer note:</span> {detail.buyerNote}
-              </div>
-            )}
-
             {canAct ? (
               <>
                 <div>
@@ -228,15 +247,51 @@ export function ReviewDrawer({
                     {formatMoney(approveTotal, currency)}
                   </span>
                 </div>
-
-                <div>
-                  <label className="label">Note to buyer (optional for approve, required to send back)</label>
-                  <textarea className="input min-h-[64px] resize-y" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Explain any pricing or quantity changes…" />
-                </div>
               </>
             ) : (
               <ReadOnlyDiff detail={detail} currency={currency} />
             )}
+
+            {/* Conversation with the buyer — a single message field, shared with
+                the decision buttons below (Send posts it now; a decision attaches it). */}
+            <div className="border-t border-ink-100 pt-4">
+              <div className="mb-2.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-500">Messages</div>
+              <NoteThread notes={detail.notes} viewpoint="STAFF" otherLabel={detail.buyerName ?? "Buyer"} />
+              {editable && (
+                <>
+                  <div className="mt-3 flex items-end gap-2">
+                    <textarea
+                      className="input min-h-[44px] flex-1 resize-y py-2"
+                      rows={2}
+                      placeholder="Message the buyer…"
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault();
+                          void sendMessage();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={sendMessage}
+                      disabled={sending || !note.trim()}
+                      className="btn-primary shrink-0"
+                      title="Send message (⌘/Ctrl+Enter)"
+                    >
+                      {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {canAct && (
+                    <p className="mt-1.5 text-[11px] text-ink-400">
+                      Send posts this to the thread now. Otherwise it&apos;s attached to your next
+                      Approve, Reject, or Request changes.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
 
             {error && <p className="text-sm text-risk-500">{error}</p>}
           </div>
@@ -266,11 +321,6 @@ function ReadOnlyDiff({ detail, currency }: { detail: RequestDetail; currency: s
   const approved = detail.status === "APPROVED";
   return (
     <div>
-      {detail.reviewNote && (
-        <div className="mb-3 rounded-[10px] bg-watch-50 px-4 py-3 text-[13px] text-watch-500 ring-1 ring-inset ring-watch-500/15">
-          <span className="font-semibold">Review note:</span> {detail.reviewNote}
-        </div>
-      )}
       <div className="grid gap-1.5 font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-400" style={{ gridTemplateColumns: "1fr 120px 120px" }}>
         <span>Product</span>
         <span className="text-right">Requested</span>

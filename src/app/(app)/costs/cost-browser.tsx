@@ -5,6 +5,7 @@ import { Search, Archive, RotateCcw, Loader2 } from "lucide-react";
 import { EmptyState } from "@/components/ui";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { formatMoney, formatPercent, formatRelativeShort } from "@/lib/utils";
+import { isPercentOfSalesUnit } from "@/lib/costing";
 import {
   archiveMasterCost,
   restoreMasterCost,
@@ -171,6 +172,9 @@ export function CostBrowser({
             const changePct = prev ? (change / prev) * 100 : 0;
             const changeColor = change > 0 ? "oklch(0.55 0.14 40)" : change < 0 ? "oklch(0.48 0.08 168)" : "oklch(0.62 0.01 260)";
             const sign = change > 0 ? "+" : change < 0 ? "−" : "±";
+            // "% of sales" items store a percentage, not a rupee amount.
+            const isPct = isPercentOfSalesUnit(item.unit);
+            const fmtVal = (n: number) => (isPct ? `${n}%` : formatMoney(n, currency));
             const historyPoints = hist.map((h) => ({
               label: formatRelativeShort(h.createdAt),
               value: h.newValue,
@@ -194,11 +198,11 @@ export function CostBrowser({
                   </div>
                 </div>
                 <div className="text-[12.5px] text-ink-600">{TYPE_LABEL[item.type]}</div>
-                <div className="text-right font-mono text-[13px] text-ink-400">{formatMoney(prev, currency)}</div>
-                <div className="text-right font-mono text-[13px] font-semibold text-ink-800">{formatMoney(item.currentCost, currency)}</div>
+                <div className="text-right font-mono text-[13px] text-ink-400">{fmtVal(prev)}</div>
+                <div className="text-right font-mono text-[13px] font-semibold text-ink-800">{fmtVal(item.currentCost)}</div>
                 <div className="text-right font-mono text-[12.5px] font-medium" style={{ color: changeColor }}>
                   {sign}
-                  {formatMoney(Math.abs(change), currency)}
+                  {fmtVal(Math.abs(change))}
                   <span className="text-[10.5px] opacity-80"> {change === 0 ? "0.0%" : formatPercent(Math.abs(changePct))}</span>
                 </div>
                 {historyPoints.length > 0 ? (

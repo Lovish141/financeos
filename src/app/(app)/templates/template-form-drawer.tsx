@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Scale, Boxes, Trash2, Loader2, AlertTriangle } from "lucide-react";
+import { Plus, Scale, Boxes, Trash2, Loader2, AlertTriangle, PackagePlus } from "lucide-react";
 import { Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerSkeleton } from "@/components/drawer";
 import { toast } from "@/components/toaster";
 import { getTemplateDraft, saveTemplateForm } from "@/server/actions/template-actions";
-import { qtyStepForUnit } from "@/lib/costing";
+import type { CreatedMasterCost } from "@/server/actions/cost-actions";
+import { qtyStepForUnit, isPercentOfSalesUnit } from "@/lib/costing";
 import { formatCurrency } from "@/lib/utils";
+import { NewComponentDialog } from "../products/new-component-dialog";
 
 export type MasterCostOption = {
   id: string;
@@ -44,11 +46,24 @@ export function TemplateFormDrawer({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [newCompOpen, setNewCompOpen] = useState(false);
+  // Items created inline from this drawer. They're already in the price book, but
+  // the server-rendered `masterCosts` prop won't include them until the page data
+  // refreshes — so keep them here to populate the pickers straight away.
+  const [justCreated, setJustCreated] = useState<MasterCostOption[]>([]);
 
-  const costById = useMemo(() => new Map(masterCosts.map((m) => [m.id, m])), [masterCosts]);
+  // Full pool: the price book as rendered plus anything created inline (deduped by
+  // id, so nothing doubles up once the page props catch up).
+  const pool = useMemo(() => {
+    const byId = new Map(masterCosts.map((m) => [m.id, m]));
+    for (const m of justCreated) if (!byId.has(m.id)) byId.set(m.id, m);
+    return [...byId.values()];
+  }, [masterCosts, justCreated]);
+
+  const costById = useMemo(() => new Map(pool.map((m) => [m.id, m])), [pool]);
   // Add-pools exclude archived items — they can't be chosen for new lines.
-  const rawMaterials = useMemo(() => masterCosts.filter((m) => m.type === "RAW_MATERIAL" && !m.archived), [masterCosts]);
-  const others = useMemo(() => masterCosts.filter((m) => m.type !== "RAW_MATERIAL" && !m.archived), [masterCosts]);
+  const rawMaterials = useMemo(() => pool.filter((m) => m.type === "RAW_MATERIAL" && !m.archived), [pool]);
+  const others = useMemo(() => pool.filter((m) => m.type !== "RAW_MATERIAL" && !m.archived), [pool]);
 
   useEffect(() => {
     if (!open) return;
@@ -92,13 +107,30 @@ export function TemplateFormDrawer({
     setLines((prev) => prev.filter((_, i) => i !== idx));
   }
 
+  // A component created in the inline dialog joins the pool and the recipe at once,
+  // so the user lands back on a template that already has the line they needed. A
+  // raw material becomes a weight line; everything else a fixed line.
+  function onComponentCreated(item: CreatedMasterCost) {
+    const option = { ...item, archived: false } as MasterCostOption;
+    setJustCreated((prev) => (prev.some((m) => m.id === item.id) ? prev : [...prev, option]));
+    const lineType: Line["lineType"] = item.type === "RAW_MATERIAL" ? "WEIGHT" : "FIXED";
+    setLines((prev) =>
+      prev.some((l) => l.masterCostId === item.id)
+        ? prev
+        : [...prev, { masterCostId: item.id, lineType, quantity: lineType === "FIXED" ? 1 : null }],
+    );
+  }
+
   // Archived items resolve to 0 (Live Reference Architecture).
   const liveCost = (id: string) => {
     const mc = costById.get(id);
     return mc && !mc.archived ? mc.currentCost : 0;
   };
+  // A "% of sales" line resolves only against a product's selling price, which a
+  // template doesn't have — so it's excluded from the template's fixed rupee base.
+  const isPctLine = (id: string) => isPercentOfSalesUnit(costById.get(id)?.unit);
   const fixedTotal = lines
-    .filter((l) => l.lineType === "FIXED")
+    .filter((l) => l.lineType === "FIXED" && !isPctLine(l.masterCostId))
     .reduce((sum, l) => sum + liveCost(l.masterCostId) * (l.quantity ?? 0), 0);
   const weightRate = lines
     .filter((l) => l.lineType === "WEIGHT")
@@ -156,6 +188,14 @@ export function TemplateFormDrawer({
                 <button
                   type="button"
                   className="btn-ghost btn-sm"
+                  onClick={() => setNewCompOpen(true)}
+                  title="Create a cost item that isn't in the price book yet"
+                >
+                  <PackagePlus className="h-3.5 w-3.5" /> New
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm"
                   onClick={() => addLine("WEIGHT")}
                   disabled={rawMaterials.length === 0}
                 >
@@ -204,7 +244,7 @@ export function TemplateFormDrawer({
                         >
                           {pool.map((m) => (
                             <option key={m.id} value={m.id} title={m.name}>
-                              {m.name} — {formatCurrency(m.currentCost, currency)}/{m.unit}
+                              {m.name} — {isPercentOfSalesUnit(m.unit) ? `${m.currentCost}% of sales` : `${formatCurrency(m.currentCost, currency)}/${m.unit}`}
                             </option>
                           ))}
                         </select>
@@ -228,9 +268,11 @@ export function TemplateFormDrawer({
                       <span className={`min-w-[64px] shrink-0 whitespace-nowrap text-right font-mono text-[13px] font-semibold ${archived ? "text-ink-400" : "text-ink-900"}`}>
                         {archived
                           ? formatCurrency(0, currency)
-                          : isWeight
-                            ? `${formatCurrency(mc?.currentCost ?? 0, currency)}`
-                            : formatCurrency((mc?.currentCost ?? 0) * (line.quantity ?? 0), currency)}
+                          : isPercentOfSalesUnit(mc?.unit)
+                            ? `${mc?.currentCost ?? 0}% of sales`
+                            : isWeight
+                              ? `${formatCurrency(mc?.currentCost ?? 0, currency)}`
+                              : formatCurrency((mc?.currentCost ?? 0) * (line.quantity ?? 0), currency)}
                       </span>
                       <button
                         type="button"
@@ -281,6 +323,15 @@ export function TemplateFormDrawer({
           {saving ? "Saving…" : mode === "create" ? "Create template" : "Save recipe (new version)"}
         </button>
       </DrawerFooter>
+
+      {/* Portals above this drawer, so the in-progress recipe stays untouched. */}
+      <NewComponentDialog
+        open={newCompOpen}
+        currency={currency}
+        subject="recipe"
+        onClose={() => setNewCompOpen(false)}
+        onCreated={onComponentCreated}
+      />
     </Drawer>
   );
 }

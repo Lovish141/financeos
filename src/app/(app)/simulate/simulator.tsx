@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { runSimulation, saveSimSettings, type SimResult } from "@/server/actions/simulate-actions";
 import { formatMoney, formatPercent } from "@/lib/utils";
-import { HEALTH_COLOR } from "@/lib/costing";
+import { HEALTH_COLOR, isPercentOfSalesUnit } from "@/lib/costing";
 
 type MasterCost = { id: string; name: string; type: string; unit: string; currentCost: number };
 
@@ -145,7 +145,7 @@ export function Simulator({
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-white" title={m.name}>{m.name}</span>
                   <span className="shrink-0 font-mono text-[10.5px]" style={{ color: "oklch(0.62 0.02 260)" }} title={m.unit}>
-                    {formatMoney(m.currentCost, currency)}/{m.unit}
+                    {isPercentOfSalesUnit(m.unit) ? `${m.currentCost}% of sales` : `${formatMoney(m.currentCost, currency)}/${m.unit}`}
                   </span>
                 </button>
               );
@@ -193,7 +193,7 @@ export function Simulator({
                   </div>
 
                   <div className="mt-1 font-mono text-[10px]" style={{ color: "oklch(0.58 0.02 260)" }}>
-                    base {formatMoney(current, currency)}/{mc.unit}
+                    base {isPercentOfSalesUnit(mc.unit) ? `${current}% of sales` : `${formatMoney(current, currency)}/${mc.unit}`}
                   </div>
 
                   <div className="mt-2 flex items-center gap-2.5">

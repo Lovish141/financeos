@@ -7,7 +7,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { marginHealth, HEALTH_COLOR } from "@/lib/costing";
 import { formatMoney, formatPercent, categoryColor } from "@/lib/utils";
 import { deleteTemplate, searchTemplates, type TemplateListItem } from "@/server/actions/template-actions";
-import { NewTemplateButton, TemplateRowOpen, TemplateEditButton, onTemplatesChanged } from "./template-drawers";
+import { NewTemplateButton, TemplateRowOpen, TemplateEditButton, TemplateCloneButton, onTemplatesChanged } from "./template-drawers";
 
 interface Thresholds {
   marginRedThreshold: number;
@@ -121,6 +121,7 @@ export function TemplateBrowser({
                   {editable && (
                     <div className="flex shrink-0 gap-1.5">
                       <TemplateEditButton id={t.id} />
+                      <TemplateCloneButton id={t.id} />
                       <ConfirmDialog
                         action={deleteTemplate.bind(null, t.id)}
                         heading={`Delete ${t.name}?`}

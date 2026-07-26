@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useActionState, useEffect, useRef, useState } from "react";
+import { Suspense, useActionState, useEffect, useRef, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus, Loader2, Upload, UploadCloud, FileText, X, Download, CheckCircle2, AlertCircle, Trash2 } from "lucide-react";
 import { Drawer, DrawerBody, DrawerFooter, DrawerHeader } from "@/components/drawer";
@@ -171,16 +171,17 @@ function newLine(product?: ProductOption): LineDraft {
   };
 }
 
-/** A compact %/₹ toggle used by both line and order discount inputs. */
+/** A compact %/₹ toggle used by both line and order discount inputs. Stretches
+ *  to the height of the adjacent input (parent uses `items-stretch`). */
 function DiscountTypeToggle({ value, onChange }: { value: DiscountType; onChange: (t: DiscountType) => void }) {
   return (
-    <div className="flex overflow-hidden rounded-lg border border-ink-200">
+    <div className="flex shrink-0 self-stretch overflow-hidden rounded-lg border border-ink-300">
       {(["PERCENT", "FLAT"] as DiscountType[]).map((t) => (
         <button
           key={t}
           type="button"
           onClick={() => onChange(t)}
-          className={`px-2 py-1 font-mono text-[12px] font-semibold transition-colors ${value === t ? "bg-brand-600 text-white" : "bg-white text-ink-500 hover:bg-ink-100"}`}
+          className={`flex w-8 items-center justify-center font-mono text-[13px] font-semibold leading-none transition-colors ${value === t ? "bg-brand-600 text-white" : "bg-white text-ink-500 hover:bg-ink-100"}`}
           title={t === "PERCENT" ? "Percentage discount" : "Flat amount discount"}
         >
           {t === "PERCENT" ? "%" : "₹"}
@@ -422,8 +423,8 @@ function SaleFormDrawer({
                       </label>
                       <label className="block min-w-0">
                         <span className="mb-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-ink-400">Discount</span>
-                        <div className="flex items-center gap-1.5">
-                          <input className="input px-2 text-right" type="number" step="0.01" min="0" value={l.discountValue} onChange={(e) => patchLine(i, { discountValue: e.target.value })} placeholder="0" />
+                        <div className="flex items-stretch gap-1.5">
+                          <input className="input min-w-0 flex-1 px-2 text-right" type="number" step="0.01" min="0" value={l.discountValue} onChange={(e) => patchLine(i, { discountValue: e.target.value })} placeholder="0" />
                           <DiscountTypeToggle value={l.discountType} onChange={(t) => patchLine(i, { discountType: t })} />
                         </div>
                       </label>
@@ -449,18 +450,20 @@ function SaleFormDrawer({
           {/* Order-level discount */}
           <div>
             <label className="label">Order discount (optional)</label>
-            <div className="flex items-center gap-1.5">
-              <input
-                className="input px-2 text-right"
-                style={{ maxWidth: 120 }}
-                type="number"
-                step="0.01"
-                min="0"
-                value={orderDiscountValue}
-                onChange={(e) => setOrderDiscountValue(e.target.value)}
-                placeholder="0"
-              />
-              <DiscountTypeToggle value={orderDiscountType} onChange={setOrderDiscountType} />
+            <div className="flex items-center gap-2">
+              <div className="flex items-stretch gap-1.5">
+                <input
+                  className="input px-2 text-right"
+                  style={{ maxWidth: 120 }}
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={orderDiscountValue}
+                  onChange={(e) => setOrderDiscountValue(e.target.value)}
+                  placeholder="0"
+                />
+                <DiscountTypeToggle value={orderDiscountType} onChange={setOrderDiscountType} />
+              </div>
               <span className="text-[11.5px] text-ink-400">applied across the whole invoice</span>
             </div>
           </div>
@@ -507,7 +510,7 @@ function TotalRow({ label, value, negative }: { label: string; value: string; ne
 // The optional `invoice` column groups rows into one multi-product order; rows
 // without an invoice id each import as their own single-line order. Optional
 // discount columns capture per-line and invoice-wide reductions.
-const TEMPLATE_CSV = `invoice,sku,quantity,date,unit_price,line_discount,line_discount_type,order_discount,order_discount_type,channel,customer
+const TEMPLATE_CSV = `Invoice,SKU,Qty,Sale date,List price,Discount,Discount type,Order discount,Order discount type,Channel,Customer
 INV-1001,MIX-BASIN-EL,120,2026-06-01,1420,5,percent,10,percent,retail,Sharma Traders
 INV-1001,MIX-BASIN-PR,45,2026-06-01,1790,,,10,percent,retail,Sharma Traders
 INV-1002,MIX-BASIN-EC,200,2026-06-05,999,50,flat,,,online,`;
@@ -518,7 +521,12 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const REQUIRED_COLS = ["sku", "quantity", "date", "unit_price"];
+const REQUIRED_COLS = ["SKU", "Qty", "Sale date", "List price"];
+
+/** Inline monospace pill for referencing a column name inside instruction text. */
+function Col({ children }: { children: ReactNode }) {
+  return <code className="rounded bg-white px-1 py-0.5 font-mono text-[11px] text-ink-600 ring-1 ring-ink-200">{children}</code>;
+}
 
 function SaleImportDrawer({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
   const [result, action] = useActionState<ImportResult | undefined, FormData>(importSalesCsv, undefined);
@@ -648,7 +656,7 @@ function SaleImportDrawer({ onClose, onImported }: { onClose: () => void; onImpo
 
             <div className="rounded-xl border border-[var(--border)] bg-ink-50/50 p-4">
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-ink-500">Required columns</span>
+                <span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-ink-500">Columns</span>
                 <a
                   href={templateHref}
                   download="sales-template.csv"
@@ -663,16 +671,39 @@ function SaleImportDrawer({ onClose, onImported }: { onClose: () => void; onImpo
                     {c}
                   </code>
                 ))}
-                {["channel", "customer", "invoice", "line_discount", "line_discount_type", "order_discount", "order_discount_type"].map((c) => (
+                {["Channel", "Customer", "Invoice", "Discount", "Discount type", "Order discount", "Order discount type"].map((c) => (
                   <code key={c} className="inline-flex items-center gap-1 rounded-md border border-dashed border-ink-200 bg-white px-2 py-1 font-mono text-[11px] text-ink-400">
                     {c}
                     <span className="text-[9px] uppercase tracking-[0.05em]">opt</span>
                   </code>
                 ))}
               </div>
-              <p className="mt-3 text-[12px] leading-relaxed text-ink-500">
-                Match rows to products by SKU. Rows sharing an <code className="font-mono text-[11px] text-ink-600">invoice</code> id become one multi-product order. Invalid rows are reported by line number; valid rows still import.
-              </p>
+              <ul className="mt-3 space-y-2 text-[12px] leading-relaxed text-ink-500">
+                <li className="flex gap-2">
+                  <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-300" />
+                  <span>Products are matched by <Col>SKU</Col> — a row whose SKU has no matching product is skipped and reported by line number.</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-300" />
+                  <span>Rows sharing an <Col>Invoice</Col> id become <span className="font-semibold text-ink-700">one sale with multiple products</span>. A row with no invoice id imports as its own single-product sale.</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-300" />
+                  <span>Order-level fields — <Col>Sale date</Col>, <Col>Channel</Col>, <Col>Customer</Col>, <Col>Order discount</Col> — are taken from the <span className="font-semibold text-ink-700">first row</span> of each invoice; later rows ignore them.</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-300" />
+                  <span>Customers are matched to existing records by name (case-insensitive) and are <span className="font-semibold text-ink-700">never created</span>. An unknown or duplicate name still imports the sale — unlinked, with a warning.</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-300" />
+                  <span><Col>Discount type</Col> and <Col>Order discount type</Col> accept <span className="font-mono text-[11px] text-ink-600">percent</span> or <span className="font-mono text-[11px] text-ink-600">flat</span>. <Col>Sale date</Col> accepts <span className="font-mono text-[11px] text-ink-600">YYYY-MM-DD</span> or <span className="font-mono text-[11px] text-ink-600">DD-MM-YYYY</span> and can't be in the future.</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-ink-300" />
+                  <span>Invalid rows are reported by line number; all valid rows still import.</span>
+                </li>
+              </ul>
             </div>
 
             {result && (result.imported > 0 || result.errors.length > 0 || (result.warnings?.length ?? 0) > 0) && (

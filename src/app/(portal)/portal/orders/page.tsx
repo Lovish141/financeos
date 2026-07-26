@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { getMyRequests, buyerCurrency } from "@/server/actions/buyer-actions";
+import { getMyRequests, buyerCurrency, getCatalog } from "@/server/actions/buyer-actions";
 import { EmptyState } from "@/components/ui";
 import { ClipboardList } from "lucide-react";
 import { MyRequests } from "./my-requests";
 
 export default async function MyOrdersPage() {
-  const [requests, currency] = await Promise.all([getMyRequests(), buyerCurrency()]);
+  const [requests, currency, catalog] = await Promise.all([getMyRequests(), buyerCurrency(), getCatalog()]);
 
   return (
     <div className="animate-fade-up">
@@ -30,7 +30,7 @@ export default async function MyOrdersPage() {
           }
         />
       ) : (
-        <MyRequests initial={requests} currency={currency} />
+        <MyRequests initial={requests} currency={currency} catalog={catalog} />
       )}
     </div>
   );

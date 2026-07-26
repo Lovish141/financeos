@@ -20,6 +20,8 @@ import {
   type ImportResult,
 } from "@/server/actions/cost-actions";
 import { formatCurrency, formatRelativeShort } from "@/lib/utils";
+import { UnitInput } from "@/components/unit-input";
+import { isPercentOfSalesUnit } from "@/lib/costing";
 import { CostImpact } from "./cost-impact";
 
 const GREEN = "oklch(0.48 0.08 168)";
@@ -40,7 +42,6 @@ const TYPE_LABEL: Record<string, string> = {
   COMPONENT: "Component",
   SERVICE: "Service",
 };
-const DEFAULT_UNIT: Record<string, string> = { RAW_MATERIAL: "kg", COMPONENT: "piece", SERVICE: "piece" };
 
 // ---- pub/sub (mirrors products/product-drawers.tsx) -----------------------
 type CostEvent =
@@ -226,15 +227,15 @@ function CostFormDrawer({
     } else {
       setName("");
       setType("RAW_MATERIAL");
-      setUnit("kg");
+      setUnit("");
       setCost("");
       setCategory("");
     }
   }, [open, mode, initial]);
 
+  // Unit is independent of type now — changing the type leaves it untouched.
   function onTypeChange(t: string) {
     setType(t);
-    setUnit(DEFAULT_UNIT[t] ?? "piece");
   }
 
   async function handleSave() {
@@ -259,6 +260,9 @@ function CostFormDrawer({
     onClose();
   }
 
+  // A "% of sales" item stores a percentage, not a rupee amount — adapt the field.
+  const isPct = isPercentOfSalesUnit(unit);
+
   return (
     <Drawer open={open} onClose={onClose} width={452}>
       <DrawerHeader onClose={onClose}>
@@ -277,20 +281,20 @@ function CostFormDrawer({
             <div>
               <label className="label">Type</label>
               <select className="input" value={type} onChange={(e) => onTypeChange(e.target.value)}>
-                <option value="RAW_MATERIAL">Raw material (by weight)</option>
-                <option value="COMPONENT">Component (per piece)</option>
-                <option value="SERVICE">Service (per piece)</option>
+                <option value="RAW_MATERIAL">Raw material</option>
+                <option value="COMPONENT">Component</option>
+                <option value="SERVICE">Service</option>
               </select>
             </div>
             <div>
               <label className="label">Unit</label>
-              <input className="input" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="kg / piece" />
+              <UnitInput value={unit} onChange={setUnit} placeholder="kg, piece, hour…" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="label">Current cost (₹)</label>
-              <input className="input" type="number" step="0.01" min="0" value={cost} onChange={(e) => setCost(e.target.value)} placeholder="0" />
+              <label className="label">{isPct ? "Rate (% of sales)" : "Current cost (₹)"}</label>
+              <input className="input" type="number" step="0.01" min="0" value={cost} onChange={(e) => setCost(e.target.value)} placeholder={isPct ? "e.g. 5" : "0"} />
             </div>
             <div>
               <label className="label">Category (optional)</label>
@@ -412,10 +416,21 @@ function CostPreviewDrawer({
         ) : (
           <>
             <div className="mb-5 rounded-xl px-4 py-4" style={{ background: "oklch(0.97 0.004 250)" }}>
-              <div className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-500">Current cost</div>
+              <div className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-500">
+                {isPercentOfSalesUnit(data.unit) ? "Rate" : "Current cost"}
+              </div>
               <div className="mt-1 font-mono text-[26px] font-bold tracking-[-0.02em] text-ink-900">
-                {formatCurrency(data.currentCost, data.currency)}
-                <span className="text-[14px] font-medium text-ink-400"> /{data.unit}</span>
+                {isPercentOfSalesUnit(data.unit) ? (
+                  <>
+                    {data.currentCost}
+                    <span className="text-[14px] font-medium text-ink-400"> % of sales</span>
+                  </>
+                ) : (
+                  <>
+                    {formatCurrency(data.currentCost, data.currency)}
+                    <span className="text-[14px] font-medium text-ink-400"> /{data.unit}</span>
+                  </>
+                )}
               </div>
               <div className="mt-1 text-[12px] text-ink-500">
                 {data.usedInTemplates > 0 ? `Used in ${data.usedInTemplates} template${data.usedInTemplates > 1 ? "s" : ""}.` : "Not used in any template."}

@@ -12,12 +12,19 @@ export default async function PortalLayout({ children }: { children: React.React
     prisma.customer.findUnique({ where: { id: customerId }, select: { name: true } }),
   ]);
 
+  const initials = (customer?.name ?? name ?? email ?? "?")
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+
   return (
     <div className="flex min-h-screen flex-col bg-[oklch(0.985_0.003_240)]">
-      <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-white/85 backdrop-blur-md">
-        <div className="mx-auto flex h-[62px] max-w-5xl items-center gap-4 px-5 sm:px-8">
+      <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-white/85 backdrop-blur-md">
+        <div className="mx-auto flex h-[62px] max-w-6xl items-center gap-4 px-5 sm:px-8">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[oklch(0.3_0.03_175)]">
+            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[oklch(0.3_0.03_175)] shadow-glow">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.9 0.05 168)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M4 19V5M4 14l5-4 4 3 7-7" />
               </svg>
@@ -31,16 +38,21 @@ export default async function PortalLayout({ children }: { children: React.React
               </div>
             </div>
           </div>
-          <div className="ml-auto flex items-center gap-4">
-            <div className="hidden text-right leading-tight sm:block">
-              <div className="text-[13px] font-semibold text-ink-800">{customer?.name}</div>
-              <div className="truncate font-mono text-[10px] text-ink-400">{name ?? email}</div>
+          <div className="ml-auto flex items-center gap-3 sm:gap-4">
+            <div className="hidden items-center gap-2.5 rounded-full border border-[var(--border)] bg-white py-1 pl-1 pr-3.5 shadow-soft sm:flex">
+              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">
+                {initials}
+              </div>
+              <div className="text-right leading-tight">
+                <div className="text-[12.5px] font-semibold text-ink-800">{customer?.name}</div>
+                <div className="max-w-[160px] truncate font-mono text-[9.5px] text-ink-400">{name ?? email}</div>
+              </div>
             </div>
             <PortalNav />
           </div>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-5xl flex-1 px-5 py-8 sm:px-8">{children}</main>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-5 py-8 sm:px-8">{children}</main>
       <Toaster />
     </div>
   );

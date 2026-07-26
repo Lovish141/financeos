@@ -1,4 +1,7 @@
 import type { OrderRequestStatus, Prisma } from "@prisma/client";
+import { parseNotes, type RequestNote } from "@/lib/request-notes";
+
+export type { RequestNote } from "@/lib/request-notes";
 
 // Shared shapes + mapping for rendering an order request (buyer portal + staff
 // review). Kept out of the "use server" action files, which may only export
@@ -19,8 +22,7 @@ export interface RequestItemView {
 export interface RequestView {
   id: string;
   status: OrderRequestStatus;
-  buyerNote: string | null;
-  reviewNote: string | null;
+  notes: RequestNote[]; // threaded buyer↔staff communication, oldest first
   createdAt: string;
   submittedAt: string | null;
   decidedAt: string | null;
@@ -66,8 +68,7 @@ export function toRequestView(r: RequestRow): RequestView {
   return {
     id: r.id,
     status: r.status,
-    buyerNote: r.buyerNote,
-    reviewNote: r.reviewNote,
+    notes: parseNotes(r.notes),
     createdAt: r.createdAt.toISOString(),
     submittedAt: r.submittedAt?.toISOString() ?? null,
     decidedAt: r.decidedAt?.toISOString() ?? null,

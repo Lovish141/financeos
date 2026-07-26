@@ -2,7 +2,8 @@
 
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, Copy, Loader2 } from "lucide-react";
+import { cloneProduct } from "@/server/actions/product-actions";
 import { ProductPreviewDrawer } from "./product-preview-drawer";
 import { ProductHistoryDrawer } from "./product-history-drawer";
 import { ProductFormDrawer, type TemplateOption, type MasterCostOption } from "./product-form-drawer";
@@ -51,6 +52,34 @@ export function ProductEditButton({ id }: { id: string }) {
   return (
     <button type="button" className="icon-btn" title="Edit" onClick={() => openProductForm("edit", id)}>
       <Pencil className="h-[15px] w-[15px]" strokeWidth={1.9} />
+    </button>
+  );
+}
+
+/** Duplicate a product into a new DRAFT SKU, then refetch the table. */
+export function ProductCloneButton({ id }: { id: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      className="icon-btn"
+      title="Duplicate"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const res = await cloneProduct(id);
+          if (res.ok) notifyProductsChanged();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? (
+        <Loader2 className="h-[15px] w-[15px] animate-spin" strokeWidth={1.9} />
+      ) : (
+        <Copy className="h-[15px] w-[15px]" strokeWidth={1.9} />
+      )}
     </button>
   );
 }

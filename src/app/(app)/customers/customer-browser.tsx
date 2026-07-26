@@ -102,7 +102,9 @@ export function CustomerBrowser({
         </div>
       </div>
 
-      {items.length === 0 ? (
+      {loading && items.length === 0 ? (
+        <CustomerTableSkeleton />
+      ) : items.length === 0 ? (
         <EmptyState
           icon={<Users className="h-10 w-10" />}
           title={archived ? "No archived customers" : q ? "No customers match your search" : "No customers yet"}
@@ -187,5 +189,48 @@ export function CustomerBrowser({
         </div>
       )}
     </>
+  );
+}
+
+/** Placeholder rows shown while the active/archived list is being fetched. */
+function CustomerTableSkeleton() {
+  return (
+    <div className="card overflow-hidden p-0" aria-hidden>
+      <div
+        className="grid gap-3 border-b border-[var(--border)] px-[22px] py-[13px] font-mono text-[10px] uppercase tracking-[0.1em] text-ink-500"
+        style={{ gridTemplateColumns: GRID }}
+      >
+        <span>Customer</span>
+        <span>Contact</span>
+        <span>Channel</span>
+        <span className="text-right">Discount</span>
+        <span className="text-right">Orders</span>
+        <span className="text-right">Units</span>
+        <span className="text-right">Revenue</span>
+        <span />
+      </div>
+
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div
+          key={i}
+          className="grid items-center gap-3 border-b border-[var(--border)] px-[22px] py-[14px] last:border-0"
+          style={{ gridTemplateColumns: GRID }}
+        >
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <div className="h-3.5 w-[62%] animate-pulse rounded bg-ink-100" />
+            <div className="h-2.5 w-[38%] animate-pulse rounded bg-ink-50" />
+          </div>
+          <div className="h-3 w-[70%] animate-pulse rounded bg-ink-100" />
+          <div className="h-3 w-[52%] animate-pulse rounded bg-ink-100" />
+          <div className="ml-auto h-3 w-9 animate-pulse rounded bg-ink-100" />
+          <div className="ml-auto h-3 w-8 animate-pulse rounded bg-ink-100" />
+          <div className="ml-auto h-3 w-8 animate-pulse rounded bg-ink-100" />
+          <div className="ml-auto h-3 w-[64%] animate-pulse rounded bg-ink-100" />
+          <div className="flex justify-end gap-1.5">
+            <div className="h-[30px] w-[30px] animate-pulse rounded-lg bg-ink-100" />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
