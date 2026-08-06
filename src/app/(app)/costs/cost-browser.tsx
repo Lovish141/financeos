@@ -1,24 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Search, Archive, RotateCcw, Loader2 } from "lucide-react";
+import { Search, Loader2 } from "lucide-react";
 import { EmptyState } from "@/components/ui";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { formatMoney, formatPercent, formatRelativeShort } from "@/lib/utils";
 import { isPercentOfSalesUnit } from "@/lib/costing";
-import {
-  archiveMasterCost,
-  restoreMasterCost,
-  searchMasterCosts,
-  getMasterCostImpact,
-  type MasterCostListItem,
-} from "@/server/actions/cost-actions";
-import { CostRowOpen, CostEditButton, NewCostButton, onCostsChanged } from "./cost-drawer";
-import { CostImpact } from "./cost-impact";
+import { searchMasterCosts, type MasterCostListItem } from "@/server/actions/cost-actions";
+import { CostRowOpen, CostRowActions, NewCostButton, onCostsChanged } from "./cost-drawer";
 import { CostHistoryCell } from "./cost-history-cell";
 import type { CostType } from "@prisma/client";
 
-const GRID = "1.9fr 0.9fr 0.8fr 0.8fr 0.9fr 0.7fr 74px";
+const GRID = "1.9fr 0.9fr 0.8fr 0.8fr 0.9fr 0.7fr 44px";
 
 const TYPE_LABEL: Record<CostType, string> = {
   RAW_MATERIAL: "Raw material",
@@ -210,33 +202,13 @@ export function CostBrowser({
                 ) : (
                   <span className="block text-center text-ink-300">—</span>
                 )}
-                <div className="flex justify-end gap-1.5">
-                  {editable && !archived && (
-                    <CostEditButton
-                      initial={{ id: item.id, name: item.name, category: item.category, type: item.type, unit: item.unit, currentCost: item.currentCost }}
-                    />
-                  )}
+                <div className="flex justify-end">
                   {editable && (
-                    <ConfirmDialog
-                      action={(archived ? restoreMasterCost : archiveMasterCost).bind(null, item.id)}
-                      heading={archived ? `Restore ${item.name}?` : `Archive ${item.name}?`}
-                      body={
-                        archived
-                          ? "It will reappear in lists and pickers, and its cost will count again wherever it's referenced."
-                          : "It will be hidden from lists and pickers, and its cost will drop out live wherever it's referenced."
-                      }
-                      detail={archived ? undefined : () => getMasterCostImpact(item.id).then((impact) => <CostImpact impact={impact} />)}
-                      wide={!archived}
-                      confirmLabel={archived ? "Restore" : "Archive"}
-                      tone={archived ? "neutral" : "danger"}
-                      icon={archived ? "restore" : "archive"}
-                      toastMessage={archived ? "Cost item restored" : "Cost item archived"}
-                      onConfirmed={refetch}
-                      triggerTitle={archived ? "Restore" : "Archive"}
-                      triggerClassName={`icon-btn ${archived ? "" : "icon-btn-danger"}`}
-                    >
-                      {archived ? <RotateCcw className="h-[15px] w-[15px]" strokeWidth={1.9} /> : <Archive className="h-[15px] w-[15px]" strokeWidth={1.9} />}
-                    </ConfirmDialog>
+                    <CostRowActions
+                      initial={{ id: item.id, name: item.name, category: item.category, type: item.type, unit: item.unit, currentCost: item.currentCost }}
+                      archived={archived}
+                      onChanged={refetch}
+                    />
                   )}
                 </div>
               </div>

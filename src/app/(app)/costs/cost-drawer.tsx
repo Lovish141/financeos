@@ -4,7 +4,7 @@ import { Suspense, useActionState, useEffect, useRef, useState, type ReactNode }
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus, Pencil, Loader2, Archive, RotateCcw, Upload, UploadCloud, FileText, X, Download, CheckCircle2, AlertCircle, AlertTriangle } from "lucide-react";
 import { Drawer, DrawerBody, DrawerCloseButton, DrawerFooter, DrawerHeader, DrawerSkeleton } from "@/components/drawer";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ActionMenu } from "@/components/action-menu";
 import { SubmitButton } from "@/components/submit-button";
 import { toast } from "@/components/toaster";
 import {
@@ -97,11 +97,58 @@ export function CostRowOpen({ id, className, title, children }: { id: string; cl
     </button>
   );
 }
-export function CostEditButton({ initial }: { initial: CostInitial }) {
+/**
+ * Every per-cost-item action behind one "⋯" menu. Archived items lose Edit (they
+ * can't be repriced while out of circulation) and swap Archive for Restore.
+ */
+export function CostRowActions({
+  initial,
+  archived,
+  onChanged,
+  align,
+  triggerLabel,
+  triggerClassName,
+}: {
+  initial: CostInitial;
+  archived: boolean;
+  onChanged?: () => void;
+  align?: "start" | "end";
+  triggerLabel?: string;
+  triggerClassName?: string;
+}) {
   return (
-    <button type="button" className="icon-btn" title="Edit" onClick={() => openCostEdit(initial)}>
-      <Pencil className="h-[15px] w-[15px]" strokeWidth={1.9} />
-    </button>
+    <ActionMenu
+      label="Cost item actions"
+      align={align}
+      triggerLabel={triggerLabel}
+      triggerClassName={triggerClassName}
+      items={[
+        ...(archived
+          ? []
+          : [{ key: "edit", label: "Edit", icon: Pencil, onSelect: () => openCostEdit(initial) } as const]),
+        {
+          key: "archive",
+          label: archived ? "Restore" : "Archive",
+          icon: archived ? RotateCcw : Archive,
+          tone: archived ? "default" : "danger",
+          confirm: {
+            action: (archived ? restoreMasterCost : archiveMasterCost).bind(null, initial.id),
+            heading: archived ? `Restore ${initial.name}?` : `Archive ${initial.name}?`,
+            body: archived
+              ? "It will reappear in lists and pickers, and its cost will count again wherever it's referenced."
+              : "It will be hidden from lists and pickers, and its cost will drop out live wherever it's referenced.",
+            // Archiving moves live totals, so show which templates/products it hits.
+            detail: archived ? undefined : () => getMasterCostImpact(initial.id).then((impact) => <CostImpact impact={impact} />),
+            wide: !archived,
+            confirmLabel: archived ? "Restore" : "Archive",
+            tone: archived ? ("neutral" as const) : ("danger" as const),
+            icon: archived ? ("restore" as const) : ("archive" as const),
+            toastMessage: archived ? "Cost item restored" : "Cost item archived",
+            onConfirmed: onChanged,
+          },
+        },
+      ]}
+    />
   );
 }
 
@@ -158,7 +205,6 @@ function CostDrawersController({ editable }: { editable: boolean }) {
         id={view?.kind === "preview" ? view.id : null}
         editable={editable}
         onClose={() => setOpen(false)}
-        onEdit={(initial) => setView({ kind: "edit", initial })}
         onChanged={() => notifyCostsChanged()}
       />
       {/* Mounted only while open so useActionState resets between imports. */}
@@ -334,14 +380,12 @@ function CostPreviewDrawer({
   id,
   editable,
   onClose,
-  onEdit,
   onChanged,
 }: {
   open: boolean;
   id: string | null;
   editable: boolean;
   onClose: () => void;
-  onEdit: (initial: CostInitial) => void;
   onChanged: () => void;
 }) {
   const [data, setData] = useState<MasterCostDetail | null>(null);
@@ -378,34 +422,19 @@ function CostPreviewDrawer({
           <DrawerCloseButton onClose={onClose} />
         </div>
         {editable && data && initial && (
-          <div className="mt-4 flex gap-2">
-            <button className="btn-ghost btn-sm" onClick={() => onEdit(initial)}>
-              <Pencil className="h-[14px] w-[14px]" strokeWidth={1.9} /> Edit
-            </button>
-            <ConfirmDialog
-              action={(data.archived ? restoreMasterCost : archiveMasterCost).bind(null, data.id)}
-              heading={data.archived ? `Restore ${data.name}?` : `Archive ${data.name}?`}
-              body={
-                data.archived
-                  ? "It will reappear in lists and pickers, and its cost will count again wherever it's referenced."
-                  : "It will be hidden from lists and pickers, and its cost will drop out live wherever it's referenced."
-              }
-              detail={data.archived ? undefined : () => getMasterCostImpact(data.id).then((i) => <CostImpact impact={i} />)}
-              wide={!data.archived}
-              confirmLabel={data.archived ? "Restore" : "Archive"}
-              tone={data.archived ? "neutral" : "danger"}
-              icon={data.archived ? "restore" : "archive"}
-              toastMessage={data.archived ? "Cost item restored" : "Cost item archived"}
-              onConfirmed={() => {
+          <div className="mt-4 flex">
+            {/* Same menu as the table row — archiving from here also closes the drawer. */}
+            <CostRowActions
+              initial={initial}
+              archived={data.archived}
+              align="start"
+              triggerLabel="Actions"
+              triggerClassName="btn-ghost btn-sm"
+              onChanged={() => {
                 onChanged();
                 onClose();
               }}
-              triggerTitle={data.archived ? "Restore" : "Archive"}
-              triggerClassName="btn-ghost btn-sm"
-            >
-              {data.archived ? <RotateCcw className="h-[14px] w-[14px]" strokeWidth={1.9} /> : <Archive className="h-[14px] w-[14px]" strokeWidth={1.9} />}
-              {data.archived ? "Restore" : "Archive"}
-            </ConfirmDialog>
+            />
           </div>
         )}
       </div>

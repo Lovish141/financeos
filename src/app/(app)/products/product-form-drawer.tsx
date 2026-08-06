@@ -11,7 +11,7 @@ import {
   type ProductDraft,
 } from "@/server/actions/product-actions";
 import type { CreatedMasterCost } from "@/server/actions/cost-actions";
-import { qtyStepForUnit, isPercentOfSalesUnit } from "@/lib/costing";
+import { qtyStepForUnit, isPercentOfSalesUnit, isWeightBilledService, weightUnitInKg } from "@/lib/costing";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { NewComponentDialog } from "./new-component-dialog";
 
@@ -34,8 +34,47 @@ export type TemplateOption = {
 };
 export type MasterCostOption = { id: string; name: string; type: string; unit: string; currentCost: number };
 
-type Row = { masterCostId: string; qty: string };
+/**
+ * A recipe row as edited here. How it prices follows the cost item's UNIT, not
+ * its type — any master cost may carry any unit:
+ *
+ *   "% of sales"  → `qty` holds the percentage of the selling price; `rate` unused.
+ *   anything else → `qty` × `rate`, where `rate` is the ₹ per unit (₹/kg, ₹/piece…).
+ *
+ * One exception on the quantity side: a service priced by weight bills the
+ * product's raw-material weight, so its `qty` is derived, not typed.
+ *
+ * Both editable prices — the percentage and the rate — are blank-able: blank
+ * (undefined/"") means "use the master cost's live value", so the row keeps
+ * tracking the price book until the user types a product-specific number. The
+ * master's value shows as the input's placeholder either way.
+ */
+type Row = { masterCostId: string; qty: string; rate?: string };
 type Meta = { name: string; type: string; unit: string; currentCost: number; archived: boolean };
+
+/** Parse a blank-able price field: blank/garbage → undefined (use the master's value). */
+function priceOverride(v: string | undefined): number | undefined {
+  if (v === undefined || v.trim() === "") return undefined;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** Round a derived weight for display — the maths yields long decimals. */
+function round3(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
+
+/**
+ * A fresh row for a cost item. Its price override starts blank so the row tracks
+ * the price book; only the quantity (which is genuinely per-product) is seeded.
+ */
+function newRow(id: string, m: { unit: string; type: string }, qty = "1"): Row {
+  if (isPercentOfSalesUnit(m.unit)) return { masterCostId: id, qty: "" }; // percentage lives in `qty`
+  // Weight-billed services have no quantity of their own — it comes from the
+  // raw-material lines, so nothing is seeded here.
+  if (isWeightBilledService(m.type, m.unit)) return { masterCostId: id, qty: "", rate: "" };
+  return { masterCostId: id, qty, rate: "" };
+}
 
 export function ProductFormDrawer({
   open,
@@ -92,10 +131,11 @@ export function ProductFormDrawer({
   const seedFromTemplate = (tid: string): Row[] => {
     if (!tid) return [];
     const t = templates.find((x) => x.id === tid);
-    return (t?.lines ?? []).map((l) => ({
-      masterCostId: l.masterCostId,
-      qty: String(l.lineType === "WEIGHT" ? 0 : l.quantity ?? 1),
-    }));
+    // WEIGHT lines carry no template quantity (it's supplied per product), so they
+    // start at 0 for the user to fill in; fixed lines inherit the template's count.
+    return (t?.lines ?? []).map((l) =>
+      newRow(l.masterCostId, meta(l.masterCostId), l.lineType === "WEIGHT" ? "0" : String(l.quantity ?? 1)),
+    );
   };
 
   // Initialise on open.
@@ -127,7 +167,19 @@ export function ProductFormDrawer({
         setPrice(String(d.sellingPrice));
         setStatus(d.status);
         setTemplateId(d.templateId ?? "");
-        setRows(d.comps.map((c) => ({ masterCostId: c.masterCostId, qty: String(c.quantity) })));
+        setRows(
+          // Show the stored override, or blank when none was stored (legacy rows
+          // included) — a blank field keeps tracking the master's live value.
+          d.comps.map((c) =>
+            isPercentOfSalesUnit(c.unit)
+              ? { masterCostId: c.masterCostId, qty: c.percent != null ? String(c.percent) : "" }
+              : {
+                  masterCostId: c.masterCostId,
+                  qty: String(c.quantity),
+                  rate: c.rate != null ? String(c.rate) : "",
+                },
+          ),
+        );
         setExtraMeta(
           Object.fromEntries(
             d.comps.map((c) => [c.masterCostId, { name: c.name, type: c.type, unit: c.unit, currentCost: c.currentCost, archived: c.archived }]),
@@ -147,26 +199,49 @@ export function ProductFormDrawer({
   function setQty(id: string, qty: string) {
     setRows((prev) => prev.map((r) => (r.masterCostId === id ? { ...r, qty } : r)));
   }
+  function setRate(id: string, rate: string) {
+    setRows((prev) => prev.map((r) => (r.masterCostId === id ? { ...r, rate } : r)));
+  }
   function removeRow(id: string) {
     setRows((prev) => prev.filter((r) => r.masterCostId !== id));
   }
   function addRow(id: string) {
     if (!id || rows.some((r) => r.masterCostId === id)) return;
-    setRows((prev) => [...prev, { masterCostId: id, qty: "1" }]);
+    setRows((prev) => [...prev, newRow(id, meta(id))]);
   }
 
   const priceNum = parseFloat(price) || 0;
 
-  // Resolve one line's rupee cost. A "% of sales" item costs that percentage of
-  // the selling price; everything else is a flat per-unit amount. Archived items
-  // count as 0 (Live Reference). Mirrors computeProductCost in lib/costing.ts.
-  function lineCostOf(m: Meta, qty: number): number {
-    if (m.archived) return 0;
-    const unitCost = isPercentOfSalesUnit(m.unit) ? (m.currentCost / 100) * priceNum : m.currentCost;
-    return unitCost * qty;
+  // The product's raw-material weight in kg — what weight-priced services bill
+  // against. Mirrors rawMaterialWeightKg in lib/costing.ts over the live rows.
+  const weightKg = rows.reduce((sum, r) => {
+    const m = meta(r.masterCostId);
+    if (m.archived || m.type !== "RAW_MATERIAL") return sum;
+    const kgPerUnit = weightUnitInKg(m.unit);
+    return kgPerUnit === null ? sum : sum + (parseFloat(r.qty) || 0) * kgPerUnit;
+  }, 0);
+
+  /** A weight-billed service's quantity, in its own unit (derived, never typed). */
+  function derivedQtyOf(m: Meta): number {
+    return weightKg / weightUnitInKg(m.unit)!;
   }
 
-  const totalCost = rows.reduce((sum, r) => sum + lineCostOf(meta(r.masterCostId), parseFloat(r.qty) || 0), 0);
+  /** The quantity a row actually contributes — derived for weight-billed services. */
+  function qtyOf(m: Meta, r: Row): number {
+    return isWeightBilledService(m.type, m.unit) ? derivedQtyOf(m) : parseFloat(r.qty) || 0;
+  }
+
+  // Resolve one row's rupee cost, keyed off the cost item's unit. Archived items
+  // count as 0 (Live Reference). Mirrors computeProductCost in lib/costing.ts.
+  function lineCostOf(m: Meta, r: Row): number {
+    if (m.archived) return 0;
+    // "% of sales": `qty` carries the percentage, applied to the price once (no count).
+    if (isPercentOfSalesUnit(m.unit)) return ((priceOverride(r.qty) ?? m.currentCost) / 100) * priceNum;
+    // Any other unit: the product's own ₹/unit rate when set, else the master's.
+    return (priceOverride(r.rate) ?? m.currentCost) * qtyOf(m, r);
+  }
+
+  const totalCost = rows.reduce((sum, r) => sum + lineCostOf(meta(r.masterCostId), r), 0);
   const marginRs = priceNum - totalCost;
   const marginPct = priceNum > 0 ? (marginRs / priceNum) * 100 : 0;
 
@@ -176,7 +251,7 @@ export function ProductFormDrawer({
   // so the user lands back on a product that already has the line they needed.
   function onComponentCreated(item: CreatedMasterCost) {
     setJustCreated((prev) => [...prev, item]);
-    setRows((prev) => (prev.some((r) => r.masterCostId === item.id) ? prev : [...prev, { masterCostId: item.id, qty: "1" }]));
+    setRows((prev) => (prev.some((r) => r.masterCostId === item.id) ? prev : [...prev, newRow(item.id, item)]));
   }
 
   async function handleSave() {
@@ -194,7 +269,29 @@ export function ProductFormDrawer({
     fd.set("templateId", templateId);
     fd.set("sellingPrice", String(priceNum));
     fd.set("status", status);
-    fd.set("comps", JSON.stringify(rows.map((r) => ({ masterCostId: r.masterCostId, quantity: parseFloat(r.qty) || 0 }))));
+    fd.set(
+      "comps",
+      JSON.stringify(
+        // A price the user typed is stored on the line; a blank one is omitted so
+        // the line keeps resolving live from the price book.
+        rows.map((r) => {
+          const m = meta(r.masterCostId);
+          const id = r.masterCostId;
+          if (isPercentOfSalesUnit(m.unit)) {
+            // % of sales: the percentage is the price; quantity is pinned to 1
+            // because the percentage applies to the selling price exactly once.
+            const percent = priceOverride(r.qty);
+            return percent !== undefined ? { masterCostId: id, quantity: 1, percent } : { masterCostId: id, quantity: 1 };
+          }
+          // Weight-billed services store quantity 1 as a placeholder — costing
+          // derives the real quantity from the raw-material weight at read time,
+          // so a stored count would only go stale.
+          const quantity = isWeightBilledService(m.type, m.unit) ? 1 : parseFloat(r.qty) || 0;
+          const rate = priceOverride(r.rate);
+          return rate !== undefined ? { masterCostId: id, quantity, rate } : { masterCostId: id, quantity };
+        }),
+      ),
+    );
 
     const res = await (mode === "create" ? createProduct : updateProduct)(undefined, fd);
     setSaving(false);
@@ -282,7 +379,11 @@ export function ProductFormDrawer({
               )}
               {rows.map((r) => {
                 const m = meta(r.masterCostId);
-                const lineTotal = lineCostOf(m, parseFloat(r.qty) || 0);
+                const isPct = isPercentOfSalesUnit(m.unit);
+                // A weight-priced service bills the raw-material weight, so its
+                // quantity is shown read-only rather than typed.
+                const fromWeight = isWeightBilledService(m.type, m.unit);
+                const lineTotal = lineCostOf(m, r);
                 return (
                   <div key={r.masterCostId} className="flex items-center gap-2.5 border-b border-[oklch(0.96_0.003_250)] px-3.5 py-2.5 last:border-0">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: m.archived ? "oklch(0.7 0.1 65)" : TYPE_DOT[m.type] ?? TYPE_DOT.COMPONENT }} />
@@ -297,19 +398,64 @@ export function ProductFormDrawer({
                           Needs attention — cost archived
                         </div>
                       ) : (
-                        <div className="font-mono text-[10px] text-ink-400">{TYPE_LABEL[m.type] ?? "Component"}</div>
+                        <div className="font-mono text-[10px] text-ink-400">
+                          {TYPE_LABEL[m.type] ?? "Component"}
+                          {fromWeight && " · billed on raw material weight"}
+                        </div>
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
-                      <input
-                        type="number"
-                        min="0"
-                        step={qtyStepForUnit(m.unit)}
-                        value={r.qty}
-                        onChange={(e) => setQty(r.masterCostId, e.target.value)}
-                        className="w-[66px] rounded-lg border border-ink-300 px-2 py-1.5 text-right font-mono text-[13px] font-semibold text-ink-900 outline-none focus:border-brand-400"
-                      />
-                      <span className="min-w-[22px] font-mono text-[11px] text-ink-500">{m.unit}</span>
+                      {fromWeight ? (
+                        // Derived from the raw-material rows above — there is nothing
+                        // to type, so it reads as a value, not a field.
+                        <span
+                          className="w-[58px] rounded-lg bg-ink-50 px-2 py-1.5 text-right font-mono text-[13px] font-semibold text-ink-500"
+                          title="Taken from this product's raw material weight"
+                        >
+                          {round3(derivedQtyOf(m))}
+                        </span>
+                      ) : (
+                        <input
+                          type="number"
+                          min="0"
+                          // % of sales rows edit the percentage (no count); others a quantity.
+                          step={isPct ? "0.1" : qtyStepForUnit(m.unit)}
+                          value={r.qty}
+                          onChange={(e) => setQty(r.masterCostId, e.target.value)}
+                          // On a "% of sales" row this field IS the price, so it's
+                          // blank-able like the rate field — the placeholder shows the
+                          // price-book percentage the row falls back to.
+                          placeholder={isPct ? String(m.currentCost) : undefined}
+                          title={
+                            isPct
+                              ? "Percentage of this product's selling price — leave blank to use the price-book rate"
+                              : `Quantity in ${m.unit}`
+                          }
+                          className="w-[58px] rounded-lg border border-ink-300 px-2 py-1.5 text-right font-mono text-[13px] font-semibold text-ink-900 outline-none placeholder:font-normal placeholder:text-ink-400 focus:border-brand-400"
+                        />
+                      )}
+                      <span className={`font-mono text-[11px] text-ink-500 ${isPct ? "whitespace-nowrap" : "min-w-[20px]"}`}>
+                        {isPct ? "% of sales" : m.unit}
+                      </span>
+                      {!isPct && (
+                        // Every non-percentage row carries a per-product ₹/unit rate that
+                        // overrides the master's shared rate for this SKU; blank falls back
+                        // to it (shown as the placeholder), so the row tracks the live rate.
+                        <>
+                          <span className="font-mono text-[11px] text-ink-400">×</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={r.rate ?? ""}
+                            onChange={(e) => setRate(r.masterCostId, e.target.value)}
+                            placeholder={String(m.currentCost)}
+                            title="Cost per unit for this product — leave blank to use the price-book rate"
+                            className="w-[64px] rounded-lg border border-ink-300 px-2 py-1.5 text-right font-mono text-[13px] font-semibold text-ink-900 outline-none placeholder:font-normal placeholder:text-ink-400 focus:border-brand-400"
+                          />
+                          <span className="min-w-[20px] font-mono text-[11px] text-ink-500">/{m.unit}</span>
+                        </>
+                      )}
                     </div>
                     <span className="min-w-[60px] shrink-0 whitespace-nowrap text-right font-mono text-[13px] font-semibold text-ink-900" title={formatCurrency(lineTotal, currency)}>
                       {formatCurrency(lineTotal, currency)}
@@ -332,7 +478,7 @@ export function ProductFormDrawer({
                   onChange={(e) => { addRow(e.target.value); e.currentTarget.value = ""; }}
                   disabled={addable.length === 0}
                 >
-                  <option value="">{addable.length === 0 ? "All components added" : "+ Add component…"}</option>
+                  <option value="">{addable.length === 0 ? "All components added" : "Add component…"}</option>
                   {addable.map((m) => (
                     <option key={m.id} value={m.id} title={m.name}>
                       {m.name} — {isPercentOfSalesUnit(m.unit) ? `${m.currentCost}% of sales` : `${formatCurrency(m.currentCost, currency)}/${m.unit}`}
@@ -345,7 +491,7 @@ export function ProductFormDrawer({
                   type="button"
                   onClick={() => setNewCompOpen(true)}
                   title="Create a component that isn't in the price book yet"
-                  className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] border border-ink-200 bg-white px-2.5 py-[9px] text-[12.5px] font-semibold text-ink-700 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
+                  className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] border border-brand-200 bg-brand-50 px-2.5 py-[9px] text-[12.5px] font-semibold text-brand-700 transition-colors hover:border-brand-300 hover:bg-brand-100 hover:text-brand-800"
                 >
                   <Plus className="h-3.5 w-3.5" strokeWidth={2.2} /> New component
                 </button>

@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Pencil, Copy, Trash2, Scale, Boxes, Loader2, AlertTriangle } from "lucide-react";
+import { Pencil, Copy, Trash2, Scale, Boxes, AlertTriangle } from "lucide-react";
 import { Drawer, DrawerBody, DrawerCloseButton, DrawerSkeleton } from "@/components/drawer";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ActionMenu } from "@/components/action-menu";
 import {
   cloneTemplate,
   deleteTemplate,
   getTemplateDetail,
   type TemplateDetail,
 } from "@/server/actions/template-actions";
+import { isPercentOfSalesUnit } from "@/lib/costing";
 import { formatCurrency, formatRelativeShort, categoryColor } from "@/lib/utils";
 import { toast } from "@/components/toaster";
 import { notifyTemplatesChanged } from "./template-drawers";
@@ -92,32 +93,36 @@ export function TemplatePreviewDrawer({
           <DrawerCloseButton onClose={onClose} />
         </div>
         {editable && data && (
-          <div className="mt-4 flex gap-2">
-            <button className="btn-ghost btn-sm" onClick={() => onEdit(data.id)}>
-              <Pencil className="h-[14px] w-[14px]" strokeWidth={1.9} /> Edit
-            </button>
-            <button className="btn-ghost btn-sm" onClick={handleClone} disabled={cloning}>
-              {cloning ? <Loader2 className="h-[14px] w-[14px] animate-spin" /> : <Copy className="h-[14px] w-[14px]" strokeWidth={1.9} />}
-              Clone
-            </button>
-            <ConfirmDialog
-              action={deleteTemplate.bind(null, data.id)}
-              heading={`Delete ${data.name}?`}
-              body={
-                data.productCount > 0
-                  ? `This can't be undone. ${data.productCount} product${data.productCount > 1 ? "s" : ""} built on it will also be deleted.`
-                  : "This can't be undone."
-              }
-              confirmLabel="Delete"
-              triggerTitle="Delete"
-              triggerClassName="btn-ghost btn-sm text-risk-500"
-              onConfirmed={() => {
-                onClose();
-                notifyTemplatesChanged();
-              }}
-            >
-              <Trash2 className="h-[14px] w-[14px]" strokeWidth={1.9} /> Delete
-            </ConfirmDialog>
+          <div className="mt-4 flex">
+            <ActionMenu
+              label="Template actions"
+              align="start"
+              triggerLabel="Actions"
+              triggerClassName="btn-ghost btn-sm"
+              items={[
+                { key: "edit", label: "Edit", icon: Pencil, onSelect: () => onEdit(data.id) },
+                { key: "clone", label: "Duplicate", icon: Copy, disabled: cloning, onSelect: handleClone },
+                {
+                  key: "delete",
+                  label: "Delete",
+                  icon: Trash2,
+                  tone: "danger",
+                  confirm: {
+                    action: deleteTemplate.bind(null, data.id),
+                    heading: `Delete ${data.name}?`,
+                    body:
+                      data.productCount > 0
+                        ? `This can't be undone. ${data.productCount} product${data.productCount > 1 ? "s" : ""} built on it will also be deleted.`
+                        : "This can't be undone.",
+                    confirmLabel: "Delete",
+                    onConfirmed: () => {
+                      onClose();
+                      notifyTemplatesChanged();
+                    },
+                  },
+                },
+              ]}
+            />
           </div>
         )}
       </div>
@@ -139,7 +144,10 @@ export function TemplatePreviewDrawer({
             ) : (
               <div className="mb-[22px] flex flex-col">
                 {data.lines.map((l) => {
-                  const isWeight = l.lineType === "WEIGHT";
+                  // Both bill by weight, so both get the scale icon and a rate
+                  // rather than a rupee total: the raw material supplies the
+                  // weight, a weight-priced service charges against it.
+                  const isWeight = l.lineType === "WEIGHT" || l.billedOnWeight;
                   return (
                     <div key={l.masterCostId} className="flex items-center gap-3 border-b border-[oklch(0.96_0.003_250)] py-[11px] last:border-0">
                       <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${isWeight ? "bg-brand-50 text-brand-600" : "bg-ink-100 text-ink-500"}`}>
@@ -159,14 +167,27 @@ export function TemplatePreviewDrawer({
                           </div>
                         ) : (
                           <div className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400">
-                            {isWeight
-                              ? `${formatCurrency(l.currentCost, data.currency)}/${l.unit} · per ${data.weightUnit}`
-                              : `${l.quantity} × ${formatCurrency(l.currentCost, data.currency)}`}
+                            {/* The unit decides how a line prices: a "% of sales" item
+                                resolves against a product's selling price, so there's no
+                                rupee amount to show here; everything else is rate × qty. */}
+                            {isPercentOfSalesUnit(l.unit)
+                              ? `${l.currentCost}% of sales`
+                              : isWeight
+                                ? `${formatCurrency(l.currentCost, data.currency)}/${l.unit} · ${
+                                    l.billedOnWeight ? "on raw material weight" : "weight per product"
+                                  }`
+                                : `${l.quantity} × ${formatCurrency(l.currentCost, data.currency)}`}
                           </div>
                         )}
                       </div>
                       <div className={`min-w-[70px] shrink-0 whitespace-nowrap text-right font-mono text-[13px] font-semibold ${l.needsAttention ? "text-ink-400" : "text-ink-900"}`}>
-                        {l.needsAttention ? formatCurrency(0, data.currency) : isWeight ? `${formatCurrency(l.currentCost, data.currency)}/${data.weightUnit}` : formatCurrency(l.lineCost, data.currency)}
+                        {l.needsAttention
+                          ? formatCurrency(0, data.currency)
+                          : isPercentOfSalesUnit(l.unit)
+                            ? `${l.currentCost}%`
+                            : isWeight
+                              ? `${formatCurrency(l.currentCost, data.currency)}/${l.unit}`
+                              : formatCurrency(l.lineCost, data.currency)}
                       </div>
                     </div>
                   );

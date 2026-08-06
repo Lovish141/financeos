@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requireStaff, assertCanEdit } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { buildSnapshot, computeProductsLive } from "@/server/costing-service";
+import { isPercentOfSalesUnit, isWeightBilledService } from "@/lib/costing";
 import type { Prisma } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,8 @@ export interface TemplateDetail {
     quantity: number | null;
     lineCost: number;
     archived: boolean;
+    /** Weight-priced service — bills each product's raw-material weight. */
+    billedOnWeight: boolean;
     needsAttention: boolean;
   }[];
   fixedTotal: number;
@@ -155,6 +158,12 @@ export async function getTemplateDetail(id: string): Promise<TemplateDetail | { 
     const archived = c.masterCost.archived;
     // Archived items resolve to 0 and are flagged for the user to fix.
     const effectiveCost = archived ? 0 : c.masterCost.currentCost;
+    // Two kinds of line have no fixed rupee amount at template level, because
+    // both resolve against a product: a "% of sales" line (needs a selling price)
+    // and a weight-priced service (needs the product's raw-material weight).
+    // Like a WEIGHT line, they carry their rate as `lineCost`, not a total.
+    const perProduct =
+      isPercentOfSalesUnit(c.masterCost.unit) || isWeightBilledService(c.masterCost.type, c.masterCost.unit);
     return {
       masterCostId: c.masterCostId,
       name: c.masterCost.name,
@@ -163,13 +172,20 @@ export async function getTemplateDetail(id: string): Promise<TemplateDetail | { 
       currentCost: effectiveCost,
       lineType: c.lineType,
       quantity: c.quantity,
-      lineCost: c.lineType === "FIXED" ? (c.quantity ?? 0) * effectiveCost : effectiveCost,
+      lineCost: c.lineType === "FIXED" && !perProduct ? (c.quantity ?? 0) * effectiveCost : effectiveCost,
       archived,
+      // Weight-priced services bill each product's raw-material weight, so they
+      // join the per-kg rate rather than the template's fixed base.
+      billedOnWeight: isWeightBilledService(c.masterCost.type, c.masterCost.unit),
       needsAttention: archived,
     };
   });
-  const fixedTotal = lines.filter((l) => l.lineType === "FIXED").reduce((s, l) => s + l.lineCost, 0);
-  const weightRate = lines.filter((l) => l.lineType === "WEIGHT").reduce((s, l) => s + l.currentCost, 0);
+  const fixedTotal = lines
+    .filter((l) => l.lineType === "FIXED" && !isPercentOfSalesUnit(l.unit) && !l.billedOnWeight)
+    .reduce((s, l) => s + l.lineCost, 0);
+  const weightRate = lines
+    .filter((l) => l.lineType === "WEIGHT" || l.billedOnWeight)
+    .reduce((s, l) => s + l.currentCost, 0);
 
   return {
     ok: true,

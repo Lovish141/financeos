@@ -1,16 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Package, Search, Trash2, Loader2 } from "lucide-react";
+import { Package, Search, Loader2 } from "lucide-react";
 import { EmptyState } from "@/components/ui";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { marginHealth, HEALTH_COLOR } from "@/lib/costing";
 import { formatMoney, formatPercent } from "@/lib/utils";
-import { deleteProduct, searchProducts, type ProductListItem } from "@/server/actions/product-actions";
-import { NewProductButton, ProductRowOpen, ProductEditButton, ProductCloneButton, onProductsChanged } from "./product-drawers";
+import { searchProducts, type ProductListItem } from "@/server/actions/product-actions";
+import { NewProductButton, ProductRowOpen, ProductRowActions, onProductsChanged } from "./product-drawers";
 import { ProductHistoryCell } from "./product-history-cell";
 
-const GRID = "1.5fr 0.8fr 0.7fr 0.75fr 0.6fr 0.6fr 0.9fr 0.5fr 0.6fr 0.75fr 102px";
+const GRID = "1.5fr 0.8fr 0.7fr 0.75fr 0.6fr 0.6fr 0.9fr 0.5fr 0.6fr 0.75fr 44px";
 
 const STATUS_TABS: { value: string; label: string }[] = [
   { value: "", label: "All" },
@@ -203,22 +202,8 @@ export function ProductBrowser({
                     </span>
                   )}
                 </div>
-                <div className="flex justify-end gap-1.5">
-                  {editable && <ProductEditButton id={p.id} />}
-                  {editable && <ProductCloneButton id={p.id} />}
-                  {editable && (
-                    <ConfirmDialog
-                      action={deleteProduct.bind(null, p.id)}
-                      heading={`Delete ${p.name}?`}
-                      body="This can't be undone."
-                      confirmLabel="Delete"
-                      triggerTitle="Delete"
-                      triggerClassName="icon-btn icon-btn-danger"
-                      onConfirmed={refetch}
-                    >
-                      <Trash2 className="h-[15px] w-[15px]" strokeWidth={1.9} />
-                    </ConfirmDialog>
-                  )}
+                <div className="flex justify-end">
+                  {editable && <ProductRowActions id={p.id} name={p.name} onChanged={refetch} />}
                 </div>
               </div>
             );

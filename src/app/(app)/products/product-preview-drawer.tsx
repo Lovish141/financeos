@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Pencil, Trash2, AlertTriangle, History } from "lucide-react";
 import { Drawer, DrawerBody, DrawerCloseButton, DrawerSkeleton } from "@/components/drawer";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ActionMenu } from "@/components/action-menu";
 import { deleteProduct, getProductBreakdown, type ProductBreakdown } from "@/server/actions/product-actions";
 import { notifyProductsChanged, openProductHistory } from "./product-drawers";
 import { HEALTH_COLOR, HEALTH_TINT } from "@/lib/costing";
@@ -78,24 +78,32 @@ export function ProductPreviewDrawer({
           <DrawerCloseButton onClose={onClose} />
         </div>
         {editable && data && (
-          <div className="mt-4 flex gap-2">
-            <button className="btn-ghost btn-sm" onClick={() => onEdit(data.id)}>
-              <Pencil className="h-[14px] w-[14px]" strokeWidth={1.9} /> Edit
-            </button>
-            <ConfirmDialog
-              action={deleteProduct.bind(null, data.id)}
-              heading={`Delete ${data.name}?`}
-              body="This can't be undone."
-              confirmLabel="Delete"
-              triggerTitle="Delete"
-              triggerClassName="btn-ghost btn-sm text-risk-500"
-              onConfirmed={() => {
-                onClose();
-                notifyProductsChanged();
-              }}
-            >
-              <Trash2 className="h-[14px] w-[14px]" strokeWidth={1.9} /> Delete
-            </ConfirmDialog>
+          <div className="mt-4 flex">
+            <ActionMenu
+              label="Product actions"
+              align="start"
+              triggerLabel="Actions"
+              triggerClassName="btn-ghost btn-sm"
+              items={[
+                { key: "edit", label: "Edit", icon: Pencil, onSelect: () => onEdit(data.id) },
+                {
+                  key: "delete",
+                  label: "Delete",
+                  icon: Trash2,
+                  tone: "danger",
+                  confirm: {
+                    action: deleteProduct.bind(null, data.id),
+                    heading: `Delete ${data.name}?`,
+                    body: "This can't be undone.",
+                    confirmLabel: "Delete",
+                    onConfirmed: () => {
+                      onClose();
+                      notifyProductsChanged();
+                    },
+                  },
+                },
+              ]}
+            />
           </div>
         )}
       </div>

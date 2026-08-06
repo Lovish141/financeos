@@ -3,13 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Search, Trash2, Loader2, ShoppingCart, Pencil, ChevronRight } from "lucide-react";
 import { EmptyState } from "@/components/ui";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ActionMenu } from "@/components/action-menu";
 import { formatMoney, formatDate } from "@/lib/utils";
 import { deleteOrder, searchOrders, type OrderListItem } from "@/server/actions/sales-actions";
 import { NewSaleButton, openSaleEdit, onSalesChanged } from "./sales-drawers";
 import type { SalesChannel } from "@prisma/client";
 
-const GRID = "1.9fr 0.7fr 0.8fr 1fr 0.9fr 1fr 74px";
+const GRID = "1.9fr 0.7fr 0.8fr 1fr 0.9fr 1fr 44px";
 
 const CHANNEL_LABEL: Record<SalesChannel, string> = {
   RETAIL: "Retail",
@@ -199,24 +199,27 @@ export function SalesBrowser({
                       )}
                     </div>
                     <div className="font-mono text-[12px] text-ink-500">{formatDate(o.soldAt)}</div>
-                    <div className="flex justify-end gap-1.5">
+                    <div className="flex justify-end">
                       {editable && (
-                        <>
-                          <button type="button" className="icon-btn" title="Edit" onClick={() => openSaleEdit(o)}>
-                            <Pencil className="h-[15px] w-[15px]" strokeWidth={1.9} />
-                          </button>
-                          <ConfirmDialog
-                            action={deleteOrder.bind(null, o.id)}
-                            heading={`Delete this sale?`}
-                            body={`${o.itemCount} product${o.itemCount > 1 ? "s" : ""} on ${formatDate(o.soldAt)}. This can't be undone.`}
-                            confirmLabel="Delete"
-                            triggerTitle="Delete"
-                            triggerClassName="icon-btn icon-btn-danger"
-                            onConfirmed={refetch}
-                          >
-                            <Trash2 className="h-[15px] w-[15px]" strokeWidth={1.9} />
-                          </ConfirmDialog>
-                        </>
+                        <ActionMenu
+                          label="Sale actions"
+                          items={[
+                            { key: "edit", label: "Edit", icon: Pencil, onSelect: () => openSaleEdit(o) },
+                            {
+                              key: "delete",
+                              label: "Delete",
+                              icon: Trash2,
+                              tone: "danger",
+                              confirm: {
+                                action: deleteOrder.bind(null, o.id),
+                                heading: "Delete this sale?",
+                                body: `${o.itemCount} product${o.itemCount > 1 ? "s" : ""} on ${formatDate(o.soldAt)}. This can't be undone.`,
+                                confirmLabel: "Delete",
+                                onConfirmed: refetch,
+                              },
+                            },
+                          ]}
+                        />
                       )}
                     </div>
                   </div>

@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Boxes, Search, Trash2, Loader2 } from "lucide-react";
+import { Boxes, Search, Loader2 } from "lucide-react";
 import { EmptyState } from "@/components/ui";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { marginHealth, HEALTH_COLOR } from "@/lib/costing";
 import { formatMoney, formatPercent, categoryColor } from "@/lib/utils";
-import { deleteTemplate, searchTemplates, type TemplateListItem } from "@/server/actions/template-actions";
-import { NewTemplateButton, TemplateRowOpen, TemplateEditButton, TemplateCloneButton, onTemplatesChanged } from "./template-drawers";
+import { searchTemplates, type TemplateListItem } from "@/server/actions/template-actions";
+import { NewTemplateButton, TemplateRowOpen, TemplateRowActions, onTemplatesChanged } from "./template-drawers";
 
 interface Thresholds {
   marginRedThreshold: number;
@@ -119,24 +118,8 @@ export function TemplateBrowser({
                     )}
                   </div>
                   {editable && (
-                    <div className="flex shrink-0 gap-1.5">
-                      <TemplateEditButton id={t.id} />
-                      <TemplateCloneButton id={t.id} />
-                      <ConfirmDialog
-                        action={deleteTemplate.bind(null, t.id)}
-                        heading={`Delete ${t.name}?`}
-                        body={
-                          t.productCount > 0
-                            ? `This can't be undone. ${t.productCount} product${t.productCount > 1 ? "s" : ""} built on it will also be deleted.`
-                            : "This can't be undone."
-                        }
-                        confirmLabel="Delete"
-                        triggerTitle="Delete"
-                        triggerClassName="icon-btn icon-btn-danger"
-                        onConfirmed={refetch}
-                      >
-                        <Trash2 className="h-[15px] w-[15px]" strokeWidth={1.9} />
-                      </ConfirmDialog>
+                    <div className="flex shrink-0">
+                      <TemplateRowActions id={t.id} name={t.name} productCount={t.productCount} onChanged={refetch} />
                     </div>
                   )}
                 </div>

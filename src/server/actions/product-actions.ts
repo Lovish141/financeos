@@ -33,6 +33,10 @@ const compInputSchema = z.array(
   z.object({
     masterCostId: z.string().min(1),
     quantity: z.coerce.number().positive("Every component needs a quantity greater than 0"),
+    // "% of sales" lines only: the per-product percentage of the selling price.
+    percent: z.coerce.number().min(0, "A % of sales can't be negative").optional(),
+    // Every other line: the per-product per-unit rate override (₹/kg, ₹/piece, …).
+    rate: z.coerce.number().min(0, "A unit rate can't be negative").optional(),
   }),
 );
 
@@ -45,6 +49,11 @@ const productPayloadSchema = z.object({
   sellingPrice: z.coerce.number().positive("Selling price must be greater than 0"),
   status: z.enum(["DRAFT", "ACTIVE", "DISCONTINUED"]).optional(),
 });
+
+/** Trim a derived quantity for display — weight maths yields long decimals. */
+function round3(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
 
 /** Trim an optional free-text field to null when blank. */
 function cleanField(v: string | undefined): string | null {
@@ -69,7 +78,7 @@ function parseComps(formData: FormData) {
 async function buildComps(
   db: Db,
   templateId: string | undefined,
-  raw: { masterCostId: string; quantity: number }[],
+  raw: { masterCostId: string; quantity: number; percent?: number; rate?: number }[],
 ): Promise<
   | { error: string }
   | { comps: ProductComp[]; templateId: string | null; templateVersionId: string | null; templateName: string | null; category: string | null }
@@ -87,14 +96,22 @@ async function buildComps(
   const byId = new Map(masters.map((m) => [m.id, m]));
   if (byId.size !== ids.length) return { error: "One or more components no longer exist." };
 
-  // Slim comps — IDs + quantity only (Live Reference Architecture).
+  // Slim comps — IDs + quantity only (Live Reference Architecture), plus the
+  // per-product price the user typed: `percent` on a "% of sales" line, `rate`
+  // (₹ per unit) on every other line. Whichever is absent resolves live from the
+  // master cost, so the line keeps tracking the price book. Which of the two a
+  // line uses follows the master's unit and is decided in computeProductCost —
+  // `lineType` stays a template-shape concern only.
   const comps: ProductComp[] = raw.map((r) => {
     const mc = byId.get(r.masterCostId)!;
-    return {
+    const line: ProductComp = {
       masterCostId: mc.id,
       lineType: mc.type === "RAW_MATERIAL" ? "WEIGHT" : "FIXED",
       quantity: r.quantity,
     };
+    if (r.percent !== undefined) line.percent = r.percent;
+    if (r.rate !== undefined) line.rate = r.rate;
+    return line;
   });
 
   // Resolve template provenance (optional base). Empty Template => no links.
@@ -359,10 +376,9 @@ export async function getProductBreakdown(id: string): Promise<ProductBreakdown 
 
   const company = await prisma.company.findUnique({
     where: { id: companyId },
-    select: { baseCurrency: true, weightUnit: true, marginRedThreshold: true, marginYellowThreshold: true },
+    select: { baseCurrency: true, marginRedThreshold: true, marginYellowThreshold: true },
   });
   const currency = company?.baseCurrency ?? "INR";
-  const weightUnit = company?.weightUnit ?? "kg";
   const thresholds = {
     marginRedThreshold: company?.marginRedThreshold ?? 15,
     marginYellowThreshold: company?.marginYellowThreshold ?? 30,
@@ -395,11 +411,18 @@ export async function getProductBreakdown(id: string): Promise<ProductBreakdown 
           ? "Archived — excluded from total"
           : "Removed — excluded from total"
         : isPercentOfSalesUnit(l.unit)
-          ? // Show the rate as a % of the selling price (× qty when not 1).
-            `${l.quantity !== 1 ? `${l.quantity} × ` : ""}${
+          ? // Show the rate as a % of the selling price. A "% of sales" line has no
+            // count — it applies to the price once (quantity is pinned to 1).
+            `${
               product.sellingPrice > 0 ? Math.round((l.unitCost / product.sellingPrice) * 10000) / 100 : 0
             }% of sales`
-          : `${l.quantity}${l.lineType === "WEIGHT" ? " " + weightUnit : " " + l.unit} × ${formatCurrency(l.unitCost, currency)}`,
+          : // Every other unit is rate × quantity. The unit shown is the cost
+            // item's own — a master cost may carry any unit, so there's no
+            // company-level weight unit to substitute here. A weight-billed
+            // service says where its quantity came from, since it isn't typed.
+            `${round3(l.quantity)}${l.unit ? " " + l.unit : ""} × ${formatCurrency(l.unitCost, currency)}${
+              l.quantityFromWeight ? " · raw material weight" : ""
+            }`,
       lineCost: l.lineCost,
       sharePct: total > 0 ? Math.round((l.lineCost / total) * 100) : 0,
       archived: l.archived,
@@ -411,6 +434,10 @@ export async function getProductBreakdown(id: string): Promise<ProductBreakdown 
 export interface DraftComp {
   masterCostId: string;
   quantity: number;
+  /** "% of sales" lines: the product's stored percentage (null → use master rate). */
+  percent: number | null;
+  /** Every other line: the product's stored ₹/unit rate (null → use master rate). */
+  rate: number | null;
   name: string;
   type: string;
   unit: string;
@@ -449,6 +476,8 @@ export async function getProductDraft(id: string): Promise<ProductDraft | { ok: 
     return {
       masterCostId: l.masterCostId,
       quantity: l.quantity ?? 0,
+      percent: l.percent ?? null,
+      rate: l.rate ?? null,
       name: mc?.name ?? "Removed item",
       type: mc?.type ?? (l.lineType === "WEIGHT" ? "RAW_MATERIAL" : "COMPONENT"),
       unit: mc?.unit ?? "",

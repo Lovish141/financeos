@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus, Pencil, Loader2, Archive, RotateCcw, Mail, Phone, MapPin, Building2, Percent } from "lucide-react";
 import { Drawer, DrawerBody, DrawerCloseButton, DrawerFooter, DrawerHeader, DrawerSkeleton } from "@/components/drawer";
+import { ActionMenu } from "@/components/action-menu";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "@/components/toaster";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -83,11 +84,46 @@ export function CustomerRowOpen({ id, className, title, children }: { id: string
     </button>
   );
 }
-export function CustomerEditButton({ initial }: { initial: CustomerInitial }) {
+/**
+ * Every per-customer action behind one "⋯" menu. Archived customers lose Edit
+ * and swap Archive for Restore; existing sales keep their link either way.
+ */
+export function CustomerRowActions({
+  initial,
+  archived,
+  onChanged,
+}: {
+  initial: CustomerInitial;
+  archived: boolean;
+  onChanged?: () => void;
+}) {
   return (
-    <button type="button" className="icon-btn" title="Edit" onClick={() => openCustomerEdit(initial)}>
-      <Pencil className="h-[15px] w-[15px]" strokeWidth={1.9} />
-    </button>
+    <ActionMenu
+      label="Customer actions"
+      items={[
+        ...(archived
+          ? []
+          : [{ key: "edit", label: "Edit", icon: Pencil, onSelect: () => openCustomerEdit(initial) } as const]),
+        {
+          key: "archive",
+          label: archived ? "Restore" : "Archive",
+          icon: archived ? RotateCcw : Archive,
+          tone: archived ? "default" : "danger",
+          confirm: {
+            action: (archived ? restoreCustomer : archiveCustomer).bind(null, initial.id),
+            heading: archived ? `Restore ${initial.name}?` : `Archive ${initial.name}?`,
+            body: archived
+              ? "They will reappear in lists and the sale customer picker."
+              : "They will be hidden from lists and the sale picker. Existing sales keep their link.",
+            confirmLabel: archived ? "Restore" : "Archive",
+            tone: archived ? ("neutral" as const) : ("danger" as const),
+            icon: archived ? ("restore" as const) : ("archive" as const),
+            toastMessage: archived ? "Customer restored" : "Customer archived",
+            onConfirmed: onChanged,
+          },
+        },
+      ]}
+    />
   );
 }
 

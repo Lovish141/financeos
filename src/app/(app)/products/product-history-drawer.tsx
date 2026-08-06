@@ -8,6 +8,7 @@ import {
   type ProductRevision,
 } from "@/server/actions/product-actions";
 import { formatCurrency, formatPercent, formatRelativeShort } from "@/lib/utils";
+import { isPercentOfSalesUnit } from "@/lib/costing";
 
 // Per-kind label + colour. Metadata edits are neutral; cost moves borrow the
 // price-book palette (reprice blue, archive rust, restore mint).
@@ -169,7 +170,13 @@ function RevisionDetail({ revision, currency }: { revision: ProductRevision; cur
                     {l.name}
                   </div>
                   <div className="mt-0.5 truncate font-mono text-[10.5px] text-ink-400">
-                    {l.needsAttention ? "Excluded from total" : `${l.quantity}${l.unit ? " " + l.unit : ""} × ${formatCurrency(l.unitCost, currency)}`}
+                    {l.needsAttention
+                      ? "Excluded from total"
+                      : isPercentOfSalesUnit(l.unit)
+                        ? // A "% of sales" line applies to the price once — show the rate, not "qty × cost".
+                          `${revision.sellingPrice > 0 ? Math.round((l.unitCost / revision.sellingPrice) * 10000) / 100 : 0}% of sales`
+                        : // Rounded: a weight-derived quantity carries long decimals.
+                          `${Math.round(l.quantity * 1000) / 1000}${l.unit ? " " + l.unit : ""} × ${formatCurrency(l.unitCost, currency)}`}
                   </div>
                 </div>
                 <div className="h-[5px] w-[64px] shrink-0 overflow-hidden rounded" style={{ background: "oklch(0.95 0.003 250)" }}>

@@ -1,20 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Search, Loader2, Archive, RotateCcw, Users } from "lucide-react";
+import { Search, Loader2, Users } from "lucide-react";
 import { EmptyState } from "@/components/ui";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { formatMoney } from "@/lib/utils";
-import {
-  archiveCustomer,
-  restoreCustomer,
-  searchCustomers,
-  type CustomerListItem,
-} from "@/server/actions/customer-actions";
-import { CustomerRowOpen, CustomerEditButton, NewCustomerButton, onCustomersChanged } from "./customer-drawers";
+import { searchCustomers, type CustomerListItem } from "@/server/actions/customer-actions";
+import { CustomerRowOpen, CustomerRowActions, NewCustomerButton, onCustomersChanged } from "./customer-drawers";
 import type { SalesChannel } from "@prisma/client";
 
-const GRID = "1.5fr 1.3fr 0.9fr 0.7fr 0.6fr 0.6fr 0.85fr 64px";
+const GRID = "1.5fr 1.3fr 0.9fr 0.7fr 0.6fr 0.6fr 0.85fr 44px";
 
 const CHANNEL_LABEL: Record<SalesChannel, string> = {
   RETAIL: "Retail",
@@ -157,31 +151,13 @@ export function CustomerBrowser({
               <div className="text-right font-mono text-[13px] text-ink-600">{c.orders.toLocaleString("en-IN")}</div>
               <div className="text-right font-mono text-[13px] text-ink-600">{c.unitsSold.toLocaleString("en-IN")}</div>
               <div className="text-right font-mono text-[13px] font-semibold text-ink-900">{formatMoney(c.revenue, currency)}</div>
-              <div className="flex justify-end gap-1.5">
-                {editable && !archived && (
-                  <CustomerEditButton
-                    initial={{ id: c.id, name: c.name, email: c.email, phone: c.phone, channel: c.channel, gstin: c.gstin, city: c.city, notes: c.notes, defaultDiscountPct: c.defaultDiscountPct }}
-                  />
-                )}
+              <div className="flex justify-end">
                 {editable && (
-                  <ConfirmDialog
-                    action={(archived ? restoreCustomer : archiveCustomer).bind(null, c.id)}
-                    heading={archived ? `Restore ${c.name}?` : `Archive ${c.name}?`}
-                    body={
-                      archived
-                        ? "They will reappear in lists and the sale customer picker."
-                        : "They will be hidden from lists and the sale picker. Existing sales keep their link."
-                    }
-                    confirmLabel={archived ? "Restore" : "Archive"}
-                    tone={archived ? "neutral" : "danger"}
-                    icon={archived ? "restore" : "archive"}
-                    toastMessage={archived ? "Customer restored" : "Customer archived"}
-                    onConfirmed={refetch}
-                    triggerTitle={archived ? "Restore" : "Archive"}
-                    triggerClassName={`icon-btn ${archived ? "" : "icon-btn-danger"}`}
-                  >
-                    {archived ? <RotateCcw className="h-[15px] w-[15px]" strokeWidth={1.9} /> : <Archive className="h-[15px] w-[15px]" strokeWidth={1.9} />}
-                  </ConfirmDialog>
+                  <CustomerRowActions
+                    initial={{ id: c.id, name: c.name, email: c.email, phone: c.phone, channel: c.channel, gstin: c.gstin, city: c.city, notes: c.notes, defaultDiscountPct: c.defaultDiscountPct }}
+                    archived={archived}
+                    onChanged={refetch}
+                  />
                 )}
               </div>
             </div>

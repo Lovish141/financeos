@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Plus, Pencil, Copy, Loader2 } from "lucide-react";
-import { cloneTemplate } from "@/server/actions/template-actions";
+import { Plus, Pencil, Copy, Trash2 } from "lucide-react";
+import { ActionMenu } from "@/components/action-menu";
+import { cloneTemplate, deleteTemplate } from "@/server/actions/template-actions";
 import { TemplatePreviewDrawer } from "./template-preview-drawer";
 import { TemplateFormDrawer, type MasterCostOption } from "./template-form-drawer";
 
@@ -41,39 +42,54 @@ export function TemplateRowOpen({ id, className, title, children }: { id: string
   );
 }
 
-export function TemplateEditButton({ id }: { id: string }) {
+/**
+ * Every per-template action behind one "⋯" menu. Duplicating copies the recipe
+ * and its version-1 snapshot; deleting takes the products built on it with it,
+ * so the confirm body spells that out.
+ */
+export function TemplateRowActions({
+  id,
+  name,
+  productCount,
+  onChanged,
+}: {
+  id: string;
+  name: string;
+  productCount: number;
+  onChanged?: () => void;
+}) {
   return (
-    <button type="button" className="icon-btn" title="Edit" onClick={() => openTemplateForm("edit", id)}>
-      <Pencil className="h-[15px] w-[15px]" strokeWidth={1.9} />
-    </button>
-  );
-}
-
-/** Duplicate a template (recipe + version 1 snapshot), then refetch the grid. */
-export function TemplateCloneButton({ id }: { id: string }) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <button
-      type="button"
-      className="icon-btn"
-      title="Duplicate"
-      disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        try {
-          const res = await cloneTemplate(id);
-          if (res.ok) notifyTemplatesChanged();
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      {busy ? (
-        <Loader2 className="h-[15px] w-[15px] animate-spin" strokeWidth={1.9} />
-      ) : (
-        <Copy className="h-[15px] w-[15px]" strokeWidth={1.9} />
-      )}
-    </button>
+    <ActionMenu
+      label="Template actions"
+      items={[
+        { key: "edit", label: "Edit", icon: Pencil, onSelect: () => openTemplateForm("edit", id) },
+        {
+          key: "clone",
+          label: "Duplicate",
+          icon: Copy,
+          onSelect: async () => {
+            const res = await cloneTemplate(id);
+            if (res.ok) notifyTemplatesChanged();
+          },
+        },
+        {
+          key: "delete",
+          label: "Delete",
+          icon: Trash2,
+          tone: "danger",
+          confirm: {
+            action: deleteTemplate.bind(null, id),
+            heading: `Delete ${name}?`,
+            body:
+              productCount > 0
+                ? `This can't be undone. ${productCount} product${productCount > 1 ? "s" : ""} built on it will also be deleted.`
+                : "This can't be undone.",
+            confirmLabel: "Delete",
+            onConfirmed: onChanged,
+          },
+        },
+      ]}
+    />
   );
 }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { KeyRound, Loader2, Copy, Check, Trash2, UserCheck, UserX, PowerOff } from "lucide-react";
+import { ActionMenu } from "@/components/action-menu";
 import { toast } from "@/components/toaster";
 import {
   getPortalAccess,
@@ -112,9 +113,17 @@ export function PortalAccessPanel({ customerId }: { customerId: string }) {
                   <UserCheck className="h-3.5 w-3.5 shrink-0 text-mint-500" />
                   <span className="min-w-0 truncate">{b.name ? `${b.name} · ` : ""}{b.email}</span>
                   <span className="ml-auto shrink-0 font-mono text-[9.5px] uppercase tracking-[0.08em] text-mint-500">active</span>
-                  <button type="button" title="Revoke this buyer's access" onClick={() => removeBuyer(b.id)} className="shrink-0 text-ink-300 transition-colors hover:text-risk-500">
-                    <UserX className="h-[15px] w-[15px]" />
-                  </button>
+                  {/* Menu even for the lone action, so it lines up with the
+                      pending-invite rows stacked directly below. */}
+                  <div className="shrink-0">
+                    <ActionMenu
+                      label="Buyer actions"
+                      triggerClassName="flex h-[26px] w-[26px] items-center justify-center rounded-md text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                      items={[
+                        { key: "revoke", label: "Revoke access", icon: UserX, tone: "danger", onSelect: () => removeBuyer(b.id) },
+                      ]}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
@@ -126,12 +135,21 @@ export function PortalAccessPanel({ customerId }: { customerId: string }) {
                 <div key={i.id} className="flex items-center gap-2 text-[12.5px] text-ink-600">
                   <span className="min-w-0 truncate">{i.email}</span>
                   <span className="shrink-0 font-mono text-[9.5px] uppercase tracking-[0.08em] text-watch-500">pending</span>
-                  <button type="button" title="Copy invite link" onClick={() => copy(inviteUrl(i.token))} className="ml-auto shrink-0 text-ink-400 transition-colors hover:text-brand-600">
-                    {copied === inviteUrl(i.token) ? <Check className="h-[15px] w-[15px]" /> : <Copy className="h-[15px] w-[15px]" />}
-                  </button>
-                  <button type="button" title="Revoke invite" onClick={() => revoke(i.id)} className="shrink-0 text-ink-300 transition-colors hover:text-risk-500">
-                    <Trash2 className="h-[15px] w-[15px]" />
-                  </button>
+                  <div className="ml-auto shrink-0">
+                    <ActionMenu
+                      label="Invite actions"
+                      triggerClassName="flex h-[26px] w-[26px] items-center justify-center rounded-md text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                      items={[
+                        {
+                          key: "copy",
+                          label: copied === inviteUrl(i.token) ? "Link copied" : "Copy invite link",
+                          icon: copied === inviteUrl(i.token) ? Check : Copy,
+                          onSelect: () => copy(inviteUrl(i.token)),
+                        },
+                        { key: "revoke", label: "Revoke invite", icon: Trash2, tone: "danger", onSelect: () => revoke(i.id) },
+                      ]}
+                    />
+                  </div>
                 </div>
               ))}
             </div>

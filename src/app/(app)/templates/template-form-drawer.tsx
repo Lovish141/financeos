@@ -6,7 +6,7 @@ import { Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerSkeleton } from "
 import { toast } from "@/components/toaster";
 import { getTemplateDraft, saveTemplateForm } from "@/server/actions/template-actions";
 import type { CreatedMasterCost } from "@/server/actions/cost-actions";
-import { qtyStepForUnit, isPercentOfSalesUnit } from "@/lib/costing";
+import { qtyStepForUnit, isPercentOfSalesUnit, isWeightBilledService } from "@/lib/costing";
 import { formatCurrency } from "@/lib/utils";
 import { NewComponentDialog } from "../products/new-component-dialog";
 
@@ -129,11 +129,17 @@ export function TemplateFormDrawer({
   // A "% of sales" line resolves only against a product's selling price, which a
   // template doesn't have — so it's excluded from the template's fixed rupee base.
   const isPctLine = (id: string) => isPercentOfSalesUnit(costById.get(id)?.unit);
+  // A weight-priced service bills each product's raw-material weight, so like a
+  // WEIGHT line it has no fixed rupee amount here — it adds to the per-kg rate.
+  const isWeightBilled = (id: string) => {
+    const mc = costById.get(id);
+    return isWeightBilledService(mc?.type, mc?.unit);
+  };
   const fixedTotal = lines
-    .filter((l) => l.lineType === "FIXED" && !isPctLine(l.masterCostId))
+    .filter((l) => l.lineType === "FIXED" && !isPctLine(l.masterCostId) && !isWeightBilled(l.masterCostId))
     .reduce((sum, l) => sum + liveCost(l.masterCostId) * (l.quantity ?? 0), 0);
   const weightRate = lines
-    .filter((l) => l.lineType === "WEIGHT")
+    .filter((l) => l.lineType === "WEIGHT" || isWeightBilled(l.masterCostId))
     .reduce((sum, l) => sum + liveCost(l.masterCostId), 0);
 
   async function handleSave() {
@@ -217,6 +223,10 @@ export function TemplateFormDrawer({
                   const mc = costById.get(line.masterCostId);
                   const pool = line.lineType === "WEIGHT" ? rawMaterials : others;
                   const isWeight = line.lineType === "WEIGHT";
+                  const isPct = isPercentOfSalesUnit(mc?.unit);
+                  // Weight-priced service: quantity comes from each product's
+                  // raw-material weight, so there's nothing to set here either.
+                  const fromWeight = isWeightBilledService(mc?.type, mc?.unit);
                   const archived = mc?.archived ?? false;
                   return (
                     <div key={idx} className="flex items-center gap-2.5 border-b border-[oklch(0.96_0.003_250)] px-3.5 py-2.5 last:border-0">
@@ -250,8 +260,20 @@ export function TemplateFormDrawer({
                         </select>
                       )}
                       {!archived &&
-                        (isWeight ? (
-                          <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-400">per {weightUnit}</span>
+                        (isPct ? (
+                          // A "% of sales" line has no count — it applies to a
+                          // product's selling price once, so no quantity to edit.
+                          // Checked before lineType: the unit decides how a line
+                          // prices, and any cost item may carry any unit.
+                          <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-400">of sales</span>
+                        ) : isWeight ? (
+                          // Weight is supplied per product, so only the unit shows here —
+                          // the item's own, falling back to the company default.
+                          <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-400">per {mc?.unit || weightUnit}</span>
+                        ) : fromWeight ? (
+                          <span className="w-[92px] shrink-0 truncate text-right font-mono text-[11px] text-ink-400" title="Billed on each product's raw material weight">
+                            per {mc?.unit} of wt
+                          </span>
                         ) : (
                           <div className="flex shrink-0 items-center gap-1.5">
                             <input
@@ -270,8 +292,10 @@ export function TemplateFormDrawer({
                           ? formatCurrency(0, currency)
                           : isPercentOfSalesUnit(mc?.unit)
                             ? `${mc?.currentCost ?? 0}% of sales`
-                            : isWeight
-                              ? `${formatCurrency(mc?.currentCost ?? 0, currency)}`
+                            : isWeight || fromWeight
+                              ? // Per-unit-of-weight: the rupee amount depends on the
+                                // product, so only the rate can be shown here.
+                                `${formatCurrency(mc?.currentCost ?? 0, currency)}`
                               : formatCurrency((mc?.currentCost ?? 0) * (line.quantity ?? 0), currency)}
                       </span>
                       <button

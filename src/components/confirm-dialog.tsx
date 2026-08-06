@@ -13,6 +13,38 @@ const ICONS = {
   restore: RotateCcw,
 } as const;
 
+export interface ConfirmDialogProps {
+  action: () => void | Promise<void>;
+  heading: string;
+  body: ReactNode;
+  /**
+   * Optional extra content loaded lazily when the dialog opens (e.g. the list of
+   * templates/products a cost is used in). Fetched fresh on each open so the
+   * impact reflects current data. Rendered below `body`.
+   */
+  detail?: () => Promise<ReactNode>;
+  /** Roomier card — use when `detail` renders a list that needs the width. */
+  wide?: boolean;
+  confirmLabel?: string;
+  tone?: Tone;
+  icon?: keyof typeof ICONS;
+  /** Fire this toast when the action does NOT redirect (e.g. archive/restore). */
+  toastMessage?: string;
+  /** Called after a non-redirecting action resolves (e.g. to refresh/close a drawer). */
+  onConfirmed?: () => void;
+  triggerClassName?: string;
+  triggerTitle?: string;
+  /**
+   * Trigger content. Omit to run the dialog **controlled** (`open`/`onOpenChange`)
+   * with no trigger of its own — how ActionMenu drives it, since the menu has
+   * already closed by the time the dialog opens.
+   */
+  children?: ReactNode;
+  /** Controlled open state. Omit for the self-contained trigger + state. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
 /**
  * Design-parity confirm modal for destructive/irreversible actions. Replaces
  * the browser `window.confirm` with the design's centred card (icon, heading,
@@ -34,30 +66,15 @@ export function ConfirmDialog({
   triggerClassName,
   triggerTitle,
   children,
-}: {
-  action: () => void | Promise<void>;
-  heading: string;
-  body: ReactNode;
-  /**
-   * Optional extra content loaded lazily when the dialog opens (e.g. the list of
-   * templates/products a cost is used in). Fetched fresh on each open so the
-   * impact reflects current data. Rendered below `body`.
-   */
-  detail?: () => Promise<ReactNode>;
-  /** Roomier card — use when `detail` renders a list that needs the width. */
-  wide?: boolean;
-  confirmLabel?: string;
-  tone?: Tone;
-  icon?: keyof typeof ICONS;
-  /** Fire this toast when the action does NOT redirect (e.g. archive/restore). */
-  toastMessage?: string;
-  /** Called after a non-redirecting action resolves (e.g. to refresh/close a drawer). */
-  onConfirmed?: () => void;
-  triggerClassName?: string;
-  triggerTitle?: string;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
+  open: controlledOpen,
+  onOpenChange,
+}: ConfirmDialogProps) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    if (controlledOpen === undefined) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
   const [mounted, setMounted] = useState(false);
   const [pending, start] = useTransition();
   const [detailNode, setDetailNode] = useState<ReactNode>(null);
@@ -114,9 +131,11 @@ export function ConfirmDialog({
 
   return (
     <>
-      <button type="button" title={triggerTitle} className={triggerClassName} onClick={() => setOpen(true)}>
-        {children}
-      </button>
+      {children !== undefined && (
+        <button type="button" title={triggerTitle} className={triggerClassName} onClick={() => setOpen(true)}>
+          {children}
+        </button>
+      )}
 
       {mounted &&
         open &&

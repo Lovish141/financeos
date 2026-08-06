@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Plus, Pencil, Copy, Loader2 } from "lucide-react";
-import { cloneProduct } from "@/server/actions/product-actions";
+import { Plus, Pencil, Copy, Trash2 } from "lucide-react";
+import { ActionMenu } from "@/components/action-menu";
+import { cloneProduct, deleteProduct } from "@/server/actions/product-actions";
 import { ProductPreviewDrawer } from "./product-preview-drawer";
 import { ProductHistoryDrawer } from "./product-history-drawer";
 import { ProductFormDrawer, type TemplateOption, type MasterCostOption } from "./product-form-drawer";
@@ -48,39 +49,41 @@ export function ProductRowOpen({ id, className, title, children }: { id: string;
   );
 }
 
-export function ProductEditButton({ id }: { id: string }) {
+/**
+ * Every per-product action behind one "⋯" menu. `onChanged` refetches the
+ * client-rendered table after a delete; clone notifies the same listeners.
+ */
+export function ProductRowActions({ id, name, onChanged }: { id: string; name: string; onChanged?: () => void }) {
   return (
-    <button type="button" className="icon-btn" title="Edit" onClick={() => openProductForm("edit", id)}>
-      <Pencil className="h-[15px] w-[15px]" strokeWidth={1.9} />
-    </button>
-  );
-}
-
-/** Duplicate a product into a new DRAFT SKU, then refetch the table. */
-export function ProductCloneButton({ id }: { id: string }) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <button
-      type="button"
-      className="icon-btn"
-      title="Duplicate"
-      disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        try {
-          const res = await cloneProduct(id);
-          if (res.ok) notifyProductsChanged();
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      {busy ? (
-        <Loader2 className="h-[15px] w-[15px] animate-spin" strokeWidth={1.9} />
-      ) : (
-        <Copy className="h-[15px] w-[15px]" strokeWidth={1.9} />
-      )}
-    </button>
+    <ActionMenu
+      label="Product actions"
+      items={[
+        { key: "edit", label: "Edit", icon: Pencil, onSelect: () => openProductForm("edit", id) },
+        {
+          key: "clone",
+          label: "Duplicate",
+          icon: Copy,
+          // Async — ActionMenu spins the trigger until the new DRAFT SKU lands.
+          onSelect: async () => {
+            const res = await cloneProduct(id);
+            if (res.ok) notifyProductsChanged();
+          },
+        },
+        {
+          key: "delete",
+          label: "Delete",
+          icon: Trash2,
+          tone: "danger",
+          confirm: {
+            action: deleteProduct.bind(null, id),
+            heading: `Delete ${name}?`,
+            body: "This can't be undone.",
+            confirmLabel: "Delete",
+            onConfirmed: onChanged,
+          },
+        },
+      ]}
+    />
   );
 }
 

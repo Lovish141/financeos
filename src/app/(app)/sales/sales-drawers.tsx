@@ -267,14 +267,14 @@ function SaleFormDrawer({
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
-  // Picking a product fills that line's price with the product's catalog price
-  // (only when the field is blank, so a user's edited price isn't clobbered).
+  // Switching a line to a different product resets that line's list price to the
+  // new product's catalog price — the previous product's price no longer applies.
   function onLineProductChange(i: number, id: string) {
     const p = products.find((x) => x.id === id);
     setLines((ls) =>
       ls.map((l, idx) => {
-        if (idx !== i) return l;
-        const price = l.unitPrice.trim() === "" && p ? String(p.sellingPrice) : l.unitPrice;
+        if (idx !== i || l.productId === id) return l;
+        const price = p ? String(p.sellingPrice) : l.unitPrice;
         return { ...l, productId: id, unitPrice: price };
       }),
     );
@@ -450,22 +450,19 @@ function SaleFormDrawer({
           {/* Order-level discount */}
           <div>
             <label className="label">Order discount (optional)</label>
-            <div className="flex items-center gap-2">
-              <div className="flex items-stretch gap-1.5">
-                <input
-                  className="input px-2 text-right"
-                  style={{ maxWidth: 120 }}
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={orderDiscountValue}
-                  onChange={(e) => setOrderDiscountValue(e.target.value)}
-                  placeholder="0"
-                />
-                <DiscountTypeToggle value={orderDiscountType} onChange={setOrderDiscountType} />
-              </div>
-              <span className="text-[11.5px] text-ink-400">applied across the whole invoice</span>
+            <div className="flex items-stretch gap-1.5">
+              <input
+                className="input min-w-0 flex-1 px-2 text-right"
+                type="number"
+                step="0.01"
+                min="0"
+                value={orderDiscountValue}
+                onChange={(e) => setOrderDiscountValue(e.target.value)}
+                placeholder="0"
+              />
+              <DiscountTypeToggle value={orderDiscountType} onChange={setOrderDiscountType} />
             </div>
+            <p className="mt-1 text-[11.5px] text-ink-400">applied across the whole invoice</p>
           </div>
 
           {/* Order Total panel */}
