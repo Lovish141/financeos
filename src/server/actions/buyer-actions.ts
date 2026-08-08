@@ -21,17 +21,32 @@ export interface CatalogProduct {
   id: string;
   name: string;
   sku: string;
-  sellingPrice: number;
+  sellingPrice: number; // list price
 }
 
-/** Active products the buyer can order — safe fields only. */
-export async function getCatalog(): Promise<CatalogProduct[]> {
-  const { db } = await requireBuyer();
-  return db.product.findMany({
-    where: { status: "ACTIVE" },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, sku: true, sellingPrice: true },
-  });
+export interface BuyerCatalog {
+  products: CatalogProduct[];
+  /** The buyer's contracted standing discount %, or null when they have none. */
+  discountPct: number | null;
+}
+
+/**
+ * Active products the buyer can order — safe fields only (never cost/margin/BOM),
+ * plus the buyer's standing discount so the portal quotes their contracted price
+ * rather than raw list. The discount is applied at the invoice level (see
+ * `submitOrderRequest`), matching how staff-entered sales work.
+ */
+export async function getCatalog(): Promise<BuyerCatalog> {
+  const { db, customerId } = await requireBuyer();
+  const [products, customer] = await Promise.all([
+    db.product.findMany({
+      where: { status: "ACTIVE" },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, sku: true, sellingPrice: true },
+    }),
+    db.customer.findFirst({ where: { id: customerId }, select: { defaultDiscountPct: true } }),
+  ]);
+  return { products, discountPct: customer?.defaultDiscountPct ?? null };
 }
 
 // ---- Submit / cancel -------------------------------------------------------
@@ -66,14 +81,21 @@ export async function submitOrderRequest(_prev: ActionResult, formData: FormData
 
   // Snapshot catalog prices for the requested products (active only, tenant-scoped).
   const productIds = [...new Set(items.map((i) => i.productId))];
-  const products = await db.product.findMany({
-    where: { id: { in: productIds }, status: "ACTIVE" },
-    select: { id: true, sellingPrice: true },
-  });
+  const [products, customer] = await Promise.all([
+    db.product.findMany({
+      where: { id: { in: productIds }, status: "ACTIVE" },
+      select: { id: true, sellingPrice: true },
+    }),
+    db.customer.findFirst({ where: { id: customerId }, select: { defaultDiscountPct: true } }),
+  ]);
   const priceById = new Map(products.map((p) => [p.id, p.sellingPrice]));
   if (products.length !== productIds.length) {
     return { error: "One or more products are no longer available." };
   }
+
+  // Carry the buyer's standing discount onto the request so the price they were
+  // quoted is the price staff review — and, on approval, the price that books.
+  const standing = customer?.defaultDiscountPct ?? null;
 
   await db.orderRequest.create({
     data: {
@@ -83,11 +105,13 @@ export async function submitOrderRequest(_prev: ActionResult, formData: FormData
       status: "SUBMITTED",
       submittedAt: new Date(),
       buyerNote,
+      discountType: standing && standing > 0 ? "PERCENT" : null,
+      discountValue: standing && standing > 0 ? standing : 0,
       items: {
         create: items.map((it, idx) => ({
           productId: it.productId,
           requestedQty: it.quantity,
-          requestedUnitPrice: priceById.get(it.productId)!,
+          requestedUnitPrice: priceById.get(it.productId)!, // list price
           sortOrder: idx,
         })),
       },

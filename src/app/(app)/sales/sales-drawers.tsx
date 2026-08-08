@@ -172,7 +172,7 @@ function newLine(product?: ProductOption): LineDraft {
 }
 
 /** A compact %/₹ toggle used by both line and order discount inputs. */
-function DiscountTypeToggle({ value, onChange }: { value: DiscountType; onChange: (t: DiscountType) => void }) {
+export function DiscountTypeToggle({ value, onChange }: { value: DiscountType; onChange: (t: DiscountType) => void }) {
   return (
     <div className="flex overflow-hidden rounded-lg border border-ink-200">
       {(["PERCENT", "FLAT"] as DiscountType[]).map((t) => (
@@ -215,12 +215,19 @@ function SaleFormDrawer({
   const [customerId, setCustomerId] = useState("");
   const [orderDiscountType, setOrderDiscountType] = useState<DiscountType>("PERCENT");
   const [orderDiscountValue, setOrderDiscountValue] = useState("");
+  // Whether the operator has edited these themselves. Auto-filled values are
+  // re-applied when the customer changes; hand-typed ones are left alone.
+  const [discountTouched, setDiscountTouched] = useState(false);
+  const [channelTouched, setChannelTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+    // A reopened drawer starts fresh: nothing is "user-edited" yet.
+    setDiscountTouched(false);
+    setChannelTouched(false);
     if (mode === "edit" && initial) {
       setLines(
         initial.items.map((it) => ({
@@ -247,20 +254,35 @@ function SaleFormDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mode, initial]);
 
-  // Picking a customer defaults the channel to their usual one and pre-fills the
-  // order-level discount from the customer's standing discount (create mode only,
-  // and only when the user hasn't already typed one).
+  /**
+   * Picking a customer applies their usual channel and standing discount.
+   *
+   * Re-applied on every customer change — including clearing back to none — so
+   * correcting a mis-picked customer can't silently leave the previous
+   * customer's pricing behind. Values the user typed themselves are never
+   * overwritten (tracked by the `*Touched` flags); when those diverge from the
+   * customer's agreement the form says so rather than quietly disagreeing.
+   */
   function onCustomerChange(id: string) {
     setCustomerId(id);
-    if (mode === "create") {
-      const c = customers.find((x) => x.id === id);
-      if (c?.channel && !channel) setChannel(c.channel);
-      if (c?.defaultDiscountPct && !orderDiscountValue.trim()) {
-        setOrderDiscountType("PERCENT");
-        setOrderDiscountValue(String(c.defaultDiscountPct));
-      }
+    if (mode !== "create") return;
+    const c = customers.find((x) => x.id === id);
+
+    if (!channelTouched) setChannel(c?.channel ?? "");
+    if (!discountTouched) {
+      const pct = c?.defaultDiscountPct ?? null;
+      setOrderDiscountType("PERCENT");
+      setOrderDiscountValue(pct && pct > 0 ? String(pct) : "");
     }
   }
+
+  const selectedCustomer = customers.find((c) => c.id === customerId);
+  const standingPct = selectedCustomer?.defaultDiscountPct ?? null;
+  // Surfaced when the operator's own figure disagrees with the agreed rate.
+  const discountDiffersFromAgreement =
+    !!selectedCustomer &&
+    discountTouched &&
+    (orderDiscountType !== "PERCENT" || (parseFloat(orderDiscountValue) || 0) !== (standingPct ?? 0));
 
   function patchLine(i: number, patch: Partial<LineDraft>) {
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -360,7 +382,14 @@ function SaleFormDrawer({
             </div>
             <div>
               <label className="label">Channel (optional)</label>
-              <select className="input" value={channel} onChange={(e) => setChannel(e.target.value)}>
+              <select
+                className="input"
+                value={channel}
+                onChange={(e) => {
+                  setChannelTouched(true);
+                  setChannel(e.target.value);
+                }}
+              >
                 {CHANNELS.map((c) => (
                   <option key={c.value} value={c.value}>{c.label}</option>
                 ))}
@@ -457,12 +486,45 @@ function SaleFormDrawer({
                 step="0.01"
                 min="0"
                 value={orderDiscountValue}
-                onChange={(e) => setOrderDiscountValue(e.target.value)}
+                onChange={(e) => {
+                  setDiscountTouched(true);
+                  setOrderDiscountValue(e.target.value);
+                }}
                 placeholder="0"
               />
-              <DiscountTypeToggle value={orderDiscountType} onChange={setOrderDiscountType} />
+              <DiscountTypeToggle
+                value={orderDiscountType}
+                onChange={(t) => {
+                  setDiscountTouched(true);
+                  setOrderDiscountType(t);
+                }}
+              />
               <span className="text-[11.5px] text-ink-400">applied across the whole invoice</span>
             </div>
+            {selectedCustomer && (
+              <p className="mt-1 text-[11.5px] text-ink-400">
+                {standingPct && standingPct > 0 ? (
+                  <>
+                    {selectedCustomer.name}&apos;s agreed rate is <b className="text-ink-600">{standingPct}%</b>
+                    {discountDiffersFromAgreement && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDiscountTouched(false);
+                          setOrderDiscountType("PERCENT");
+                          setOrderDiscountValue(String(standingPct));
+                        }}
+                        className="ml-1.5 font-semibold text-brand-600 hover:text-brand-700"
+                      >
+                        Reset to agreed
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>{selectedCustomer.name} has no standing discount</>
+                )}
+              </p>
+            )}
           </div>
 
           {/* Order Total panel */}

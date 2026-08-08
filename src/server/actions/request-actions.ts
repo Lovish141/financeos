@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireStaff, assertCanEdit } from "@/lib/session";
+import { normalizeDiscount, orderTotals } from "@/lib/discount";
 import { toRequestView, type RequestView } from "@/server/request-view";
 import type { ActionResult } from "./cost-actions";
 import type { OrderRequestStatus, Prisma, SalesChannel } from "@prisma/client";
@@ -58,15 +59,40 @@ export async function searchRequests(input: {
     include: {
       customer: { select: { name: true } },
       createdBy: { select: { name: true } },
-      items: { select: { requestedQty: true, requestedUnitPrice: true, approvedQty: true, approvedUnitPrice: true, removed: true } },
+      items: {
+        select: {
+          requestedQty: true, requestedUnitPrice: true,
+          approvedQty: true, approvedUnitPrice: true,
+          approvedDiscountType: true, approvedDiscountValue: true,
+          removed: true,
+        },
+      },
     },
   });
 
   return rows.map((r) => {
-    const requestedTotal = r.items.reduce((s, it) => s + (it.requestedQty ?? 0) * (it.requestedUnitPrice ?? 0), 0);
+    // Totals are net of the request's discounts, so the list matches the drawer.
+    const requestedTotal = orderTotals({
+      lines: r.items
+        .filter((it) => it.requestedQty != null)
+        .map((it) => ({ listPrice: it.requestedUnitPrice ?? 0, quantity: it.requestedQty ?? 0, discountType: null, discountValue: 0 })),
+      orderDiscountType: r.discountType,
+      orderDiscountValue: r.discountValue,
+    }).netTotal;
     const approvedTotal =
       r.status === "APPROVED"
-        ? r.items.reduce((s, it) => (it.removed ? s : s + (it.approvedQty ?? 0) * (it.approvedUnitPrice ?? 0)), 0)
+        ? orderTotals({
+            lines: r.items
+              .filter((it) => !it.removed && it.approvedQty != null)
+              .map((it) => ({
+                listPrice: it.approvedUnitPrice ?? 0,
+                quantity: it.approvedQty ?? 0,
+                discountType: it.approvedDiscountType,
+                discountValue: it.approvedDiscountValue,
+              })),
+            orderDiscountType: r.discountType,
+            orderDiscountValue: r.discountValue,
+          }).netTotal
         : null;
     return {
       id: r.id,
@@ -120,11 +146,17 @@ export async function getRequestDetail(id: string): Promise<RequestDetail | { er
 
 // ---- Approve (with full line editing) --------------------------------------
 
+const DISCOUNT_TYPES = ["PERCENT", "FLAT"] as const;
+
 const approveLineSchema = z.object({
   itemId: z.string().optional(), // present for lines that came from the request
   productId: z.string().min(1, "Pick a product"),
   quantity: z.coerce.number().positive("Quantity must be greater than 0"),
+  // List price for the line; any reduction lives in the discount fields so the
+  // list-vs-realized split survives into the booked Sale.
   unitPrice: z.coerce.number().nonnegative("Unit price must be ≥ 0"),
+  discountType: z.enum(DISCOUNT_TYPES).optional().or(z.literal("")).nullable(),
+  discountValue: z.coerce.number().nonnegative().optional(),
 });
 
 export async function approveRequest(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
@@ -151,6 +183,22 @@ export async function approveRequest(_prev: ActionResult, formData: FormData): P
   if (!req) return { error: "Request not found." };
   if (!OPEN_STATUSES.includes(req.status)) return { error: "This request has already been decided." };
 
+  // Order-level discount: the reviewer's value if they submitted one, otherwise
+  // whatever the request already carries (seeded from the customer's standing
+  // agreement at submit). Normalised through the shared discount engine.
+  const rawOrderType = formData.get("orderDiscountType");
+  const rawOrderValue = formData.get("orderDiscountValue");
+  const orderDiscount =
+    rawOrderValue != null
+      ? normalizeDiscount(rawOrderType ? String(rawOrderType) : null, String(rawOrderValue))
+      : { type: req.discountType, value: req.discountValue };
+
+  // Per-line discounts, normalised the same way.
+  const normalizedLines = lines.map((l) => {
+    const d = normalizeDiscount(l.discountType ?? null, l.discountValue);
+    return { ...l, discountType: d.type, discountValue: d.value };
+  });
+
   // Every referenced product must belong to this tenant.
   const productIds = [...new Set(lines.map((l) => l.productId))];
   const products = await db.product.findMany({ where: { id: { in: productIds } }, select: { id: true } });
@@ -173,15 +221,26 @@ export async function approveRequest(_prev: ActionResult, formData: FormData): P
       });
       if (claim.count !== 1) throw new AlreadyDecidedError();
 
-      // 1. Book the sale (Order + Sale) from the final approved lines.
+      // 1. Book the sale (Order + Sale) from the final approved lines, carrying
+      // both the per-line and the invoice-wide discount so a portal-originated
+      // sale prices identically to the same sale entered by hand.
       const order = await tx.order.create({
         data: {
           companyId,
           customerId: req.customer.id,
           soldAt: new Date(),
           channel: (req.customer.channel as SalesChannel | null) ?? null,
+          discountType: orderDiscount.type,
+          discountValue: orderDiscount.value,
           items: {
-            create: lines.map((l) => ({ companyId, productId: l.productId, quantity: l.quantity, unitPrice: l.unitPrice })),
+            create: normalizedLines.map((l) => ({
+              companyId,
+              productId: l.productId,
+              quantity: l.quantity,
+              unitPrice: l.unitPrice,
+              discountType: l.discountType,
+              discountValue: l.discountValue,
+            })),
           },
         },
         select: { id: true },
@@ -189,11 +248,18 @@ export async function approveRequest(_prev: ActionResult, formData: FormData): P
 
       // 2. Record the diff on the request items.
       let sort = req.items.length;
-      for (const l of lines) {
+      for (const l of normalizedLines) {
         if (l.itemId) {
           await tx.orderRequestItem.update({
             where: { id: l.itemId },
-            data: { productId: l.productId, approvedQty: l.quantity, approvedUnitPrice: l.unitPrice, removed: false },
+            data: {
+              productId: l.productId,
+              approvedQty: l.quantity,
+              approvedUnitPrice: l.unitPrice,
+              approvedDiscountType: l.discountType,
+              approvedDiscountValue: l.discountValue,
+              removed: false,
+            },
           });
         } else {
           // Staff-added line — no requested side.
@@ -205,6 +271,8 @@ export async function approveRequest(_prev: ActionResult, formData: FormData): P
               requestedUnitPrice: null,
               approvedQty: l.quantity,
               approvedUnitPrice: l.unitPrice,
+              approvedDiscountType: l.discountType,
+              approvedDiscountValue: l.discountValue,
               sortOrder: sort++,
             },
           });
@@ -213,12 +281,18 @@ export async function approveRequest(_prev: ActionResult, formData: FormData): P
       // Requested lines the staff dropped.
       for (const it of req.items) {
         if (!keptItemIds.has(it.id)) {
-          await tx.orderRequestItem.update({ where: { id: it.id }, data: { removed: true, approvedQty: null, approvedUnitPrice: null } });
+          await tx.orderRequestItem.update({
+            where: { id: it.id },
+            data: { removed: true, approvedQty: null, approvedUnitPrice: null, approvedDiscountType: null, approvedDiscountValue: 0 },
+          });
         }
       }
 
-      // 3. Link the booked order back to the request.
-      await tx.orderRequest.update({ where: { id }, data: { orderId: order.id } });
+      // 3. Persist the final order discount + link the booked order back.
+      await tx.orderRequest.update({
+        where: { id },
+        data: { orderId: order.id, discountType: orderDiscount.type, discountValue: orderDiscount.value },
+      });
     });
   } catch (e) {
     if (e instanceof AlreadyDecidedError) return { error: "This request has already been decided." };

@@ -1,4 +1,5 @@
 import type { OrderRequestStatus, Prisma } from "@prisma/client";
+import { orderTotals, type DiscountType } from "@/lib/discount";
 
 // Shared shapes + mapping for rendering an order request (buyer portal + staff
 // review). Kept out of the "use server" action files, which may only export
@@ -10,9 +11,11 @@ export interface RequestItemView {
   productName: string;
   sku: string;
   requestedQty: number | null;
-  requestedUnitPrice: number | null;
+  requestedUnitPrice: number | null; // list price
   approvedQty: number | null;
-  approvedUnitPrice: number | null;
+  approvedUnitPrice: number | null;  // list price
+  approvedDiscountType: DiscountType | null;
+  approvedDiscountValue: number;
   removed: boolean;
 }
 
@@ -25,6 +28,12 @@ export interface RequestView {
   submittedAt: string | null;
   decidedAt: string | null;
   items: RequestItemView[];
+  /** Invoice-wide discount (from the customer's standing agreement, editable at approval). */
+  discountType: DiscountType | null;
+  discountValue: number;
+  /** Requested lines at list price, before any discount. */
+  requestedSubtotal: number;
+  /** What the buyer was quoted — requested lines net of the order discount. */
   requestedTotal: number;
   approvedTotal: number | null; // null until approved
 }
@@ -51,16 +60,45 @@ export function toRequestView(r: RequestRow): RequestView {
       requestedUnitPrice: it.requestedUnitPrice,
       approvedQty: it.approvedQty,
       approvedUnitPrice: it.approvedUnitPrice,
+      approvedDiscountType: it.approvedDiscountType,
+      approvedDiscountValue: it.approvedDiscountValue,
       removed: it.removed,
     }));
 
-  const requestedTotal = items.reduce(
+  // Requested side: list lines netted through the request's order-level discount,
+  // so the buyer sees the same figure staff review.
+  const requestedSubtotal = items.reduce(
     (s, it) => s + (it.requestedQty ?? 0) * (it.requestedUnitPrice ?? 0),
     0,
   );
+  const requested = orderTotals({
+    lines: items
+      .filter((it) => it.requestedQty != null)
+      .map((it) => ({
+        listPrice: it.requestedUnitPrice ?? 0,
+        quantity: it.requestedQty ?? 0,
+        discountType: null,
+        discountValue: 0,
+      })),
+    orderDiscountType: r.discountType,
+    orderDiscountValue: r.discountValue,
+  });
+
+  // Approved side: kept lines with their own line discounts, then the order discount.
   const approvedTotal =
     r.status === "APPROVED"
-      ? items.reduce((s, it) => (it.removed ? s : s + (it.approvedQty ?? 0) * (it.approvedUnitPrice ?? 0)), 0)
+      ? orderTotals({
+          lines: items
+            .filter((it) => !it.removed && it.approvedQty != null)
+            .map((it) => ({
+              listPrice: it.approvedUnitPrice ?? 0,
+              quantity: it.approvedQty ?? 0,
+              discountType: it.approvedDiscountType,
+              discountValue: it.approvedDiscountValue,
+            })),
+          orderDiscountType: r.discountType,
+          orderDiscountValue: r.discountValue,
+        }).netTotal
       : null;
 
   return {
@@ -72,7 +110,10 @@ export function toRequestView(r: RequestRow): RequestView {
     submittedAt: r.submittedAt?.toISOString() ?? null,
     decidedAt: r.decidedAt?.toISOString() ?? null,
     items,
-    requestedTotal,
+    discountType: r.discountType,
+    discountValue: r.discountValue,
+    requestedSubtotal,
+    requestedTotal: requested.netTotal,
     approvedTotal,
   };
 }

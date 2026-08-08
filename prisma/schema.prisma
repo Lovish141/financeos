@@ -514,6 +514,12 @@ model OrderRequest {
   buyerNote  String?  // optional message from the buyer with the request
   reviewNote String?  // staff message on reject / changes-requested
 
+  // Invoice-wide discount for this request. Seeded at submit from the customer's
+  // standing agreement (Customer.defaultDiscountPct) so the buyer is quoted their
+  // contracted price, and adjustable by staff at approval before it books.
+  discountType  DiscountType?
+  discountValue Float         @default(0)
+
   submittedAt DateTime?
   decidedAt   DateTime?
   decidedById String?
@@ -549,7 +555,11 @@ model OrderRequestItem {
 
   // What staff approved. Set at approval; null while pending.
   approvedQty       Float?
-  approvedUnitPrice Float?
+  approvedUnitPrice Float? // list price for the approved line
+  // Per-line discount staff applied at approval. Kept off the unit price so the
+  // list-vs-realized split survives into the booked Sale.
+  approvedDiscountType  DiscountType?
+  approvedDiscountValue Float         @default(0)
   // Staff dropped this requested line at approval (kept for the diff).
   removed           Boolean @default(false)
 

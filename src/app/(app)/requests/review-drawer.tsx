@@ -14,14 +14,25 @@ import {
   requestChanges,
   type RequestDetail,
 } from "@/server/actions/request-actions";
-import type { ProductOption } from "../sales/sales-drawers";
+import { DiscountTypeToggle, type ProductOption } from "../sales/sales-drawers";
+import { orderTotals, type DiscountType } from "@/lib/discount";
 import type { OrderRequestStatus } from "@prisma/client";
 
 const OPEN: OrderRequestStatus[] = ["SUBMITTED", "UNDER_REVIEW", "CHANGES_REQUESTED"];
+const RED = "oklch(0.55 0.14 40)";
 
 // One editable approval line. `itemId` links back to the buyer's requested line;
-// absent for a staff-added line.
-type EditLine = { key: string; itemId?: string; productId: string; quantity: string; unitPrice: string };
+// absent for a staff-added line. `unitPrice` is the LIST price — any reduction
+// lives in the discount fields, matching how a hand-entered sale is priced.
+type EditLine = {
+  key: string;
+  itemId?: string;
+  productId: string;
+  quantity: string;
+  unitPrice: string;
+  discountType: DiscountType;
+  discountValue: string;
+};
 
 let keySeq = 0;
 const nextKey = () => `l${keySeq++}`;
@@ -45,6 +56,8 @@ export function ReviewDrawer({
   const [loading, setLoading] = useState(false);
   const [lines, setLines] = useState<EditLine[]>([]);
   const [note, setNote] = useState("");
+  const [orderDiscountType, setOrderDiscountType] = useState<DiscountType>("PERCENT");
+  const [orderDiscountValue, setOrderDiscountValue] = useState("");
   const [busy, setBusy] = useState<null | "approve" | "reject" | "changes">(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,7 +74,10 @@ export function ReviewDrawer({
         return;
       }
       setDetail(res);
-      // Seed the editor from the buyer's requested lines.
+      // Seed the editor from the buyer's requested lines, and the invoice-wide
+      // discount from what the request carries (the customer's agreed rate).
+      setOrderDiscountType(res.discountType ?? "PERCENT");
+      setOrderDiscountValue(res.discountValue ? String(res.discountValue) : "");
       setLines(
         res.items
           .filter((it) => !it.removed)
@@ -71,6 +87,8 @@ export function ReviewDrawer({
             productId: it.productId,
             quantity: it.requestedQty != null ? String(it.requestedQty) : "",
             unitPrice: it.requestedUnitPrice != null ? String(it.requestedUnitPrice) : "",
+            discountType: it.approvedDiscountType ?? "PERCENT",
+            discountValue: it.approvedDiscountValue ? String(it.approvedDiscountValue) : "",
           })),
       );
     });
@@ -95,17 +113,27 @@ export function ReviewDrawer({
   }
   function addLine() {
     const p = products[0];
-    setLines((ls) => [...ls, { key: nextKey(), productId: p?.id ?? "", quantity: "", unitPrice: p ? String(p.sellingPrice) : "" }]);
+    setLines((ls) => [
+      ...ls,
+      { key: nextKey(), productId: p?.id ?? "", quantity: "", unitPrice: p ? String(p.sellingPrice) : "", discountType: "PERCENT", discountValue: "" },
+    ]);
   }
   function removeLine(key: string) {
     setLines((ls) => ls.filter((l) => l.key !== key));
   }
 
-  const approveTotal = lines.reduce((s, l) => {
-    const q = parseFloat(l.quantity);
-    const pr = parseFloat(l.unitPrice);
-    return s + (q > 0 && pr >= 0 ? q * pr : 0);
-  }, 0);
+  // Same discount engine as the manual sale form, so the figure shown here is
+  // exactly what gets booked.
+  const totals = orderTotals({
+    lines: lines.map((l) => ({
+      listPrice: parseFloat(l.unitPrice) || 0,
+      quantity: parseFloat(l.quantity) || 0,
+      discountType: l.discountType,
+      discountValue: parseFloat(l.discountValue) || 0,
+    })),
+    orderDiscountType,
+    orderDiscountValue: parseFloat(orderDiscountValue) || 0,
+  });
 
   async function approve() {
     setError(null);
@@ -115,14 +143,25 @@ export function ReviewDrawer({
       if (!l.productId) return setError(`Pick a product for line ${i + 1}.`);
       if (!(parseFloat(l.quantity) > 0)) return setError(`Quantity for line ${i + 1} must be greater than 0.`);
       if (!(parseFloat(l.unitPrice) >= 0)) return setError(`Unit price for line ${i + 1} must be 0 or more.`);
+      if (l.discountType === "PERCENT" && parseFloat(l.discountValue) > 100) return setError(`Line ${i + 1} discount can't exceed 100%.`);
     }
+    if (orderDiscountType === "PERCENT" && parseFloat(orderDiscountValue) > 100) return setError("Order discount can't exceed 100%.");
     setBusy("approve");
     const fd = new FormData();
     fd.set("id", detail!.id);
+    fd.set("orderDiscountType", orderDiscountType);
+    fd.set("orderDiscountValue", orderDiscountValue.trim() ? orderDiscountValue : "0");
     fd.set(
       "items",
       JSON.stringify(
-        lines.map((l) => ({ itemId: l.itemId, productId: l.productId, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice) })),
+        lines.map((l) => ({
+          itemId: l.itemId,
+          productId: l.productId,
+          quantity: Number(l.quantity),
+          unitPrice: Number(l.unitPrice),
+          discountType: l.discountValue.trim() ? l.discountType : "",
+          discountValue: l.discountValue.trim() ? Number(l.discountValue) : 0,
+        })),
       ),
     );
     const res = await approveRequest(undefined, fd);
@@ -184,35 +223,58 @@ export function ReviewDrawer({
                   <p className="-mt-1 mb-2 text-[11.5px] text-ink-400">
                     Adjust quantities and pricing, drop lines, or add products. This is what gets booked.
                   </p>
-                  <div className="space-y-2">
-                    <div className="grid gap-2 font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-400" style={{ gridTemplateColumns: "1fr 66px 90px 30px" }}>
-                      <span>Product</span>
-                      <span className="text-right">Qty</span>
-                      <span className="text-right">Price</span>
-                      <span />
-                    </div>
-                    {lines.map((l) => {
+                  <div className="space-y-2.5">
+                    {lines.map((l, i) => {
                       const orig = l.itemId ? detail.items.find((it) => it.id === l.itemId) : undefined;
+                      const list = parseFloat(l.unitPrice) || 0;
+                      const qty = parseFloat(l.quantity) || 0;
+                      const disc = l.discountValue.trim()
+                        ? l.discountType === "PERCENT"
+                          ? (list * Math.min(parseFloat(l.discountValue) || 0, 100)) / 100
+                          : Math.min(parseFloat(l.discountValue) || 0, list)
+                        : 0;
+                      const netUnit = Math.max(0, list - disc);
                       return (
-                        <div key={l.key}>
-                          <div className="grid items-center gap-2" style={{ gridTemplateColumns: "1fr 66px 90px 30px" }}>
-                            <select className="input" value={l.productId} onChange={(e) => onProduct(l.key, e.target.value)}>
+                        <div key={l.key} className="rounded-xl border border-[var(--border)] p-2.5">
+                          <div className="flex items-center gap-2">
+                            <select className="input min-w-0 flex-1" value={l.productId} onChange={(e) => onProduct(l.key, e.target.value)}>
                               {products.length === 0 && <option value="">No products</option>}
                               {products.map((p) => (
                                 <option key={p.id} value={p.id}>{p.name} · {p.sku}</option>
                               ))}
                             </select>
-                            <input className="input px-2 text-right" type="number" step="any" min="0" value={l.quantity} onChange={(e) => patch(l.key, { quantity: e.target.value })} placeholder="0" />
-                            <input className="input px-2 text-right" type="number" step="0.01" min="0" value={l.unitPrice} onChange={(e) => patch(l.key, { unitPrice: e.target.value })} placeholder="0" />
-                            <button type="button" title="Remove line" onClick={() => removeLine(l.key)} className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-risk-500">
+                            <button type="button" title="Remove line" onClick={() => removeLine(l.key)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100 hover:text-risk-500">
                               <Trash2 className="h-[15px] w-[15px]" strokeWidth={1.9} />
                             </button>
                           </div>
+                          <div className="mt-2 grid items-end gap-2" style={{ gridTemplateColumns: "56px 82px 1fr auto" }}>
+                            <label className="block">
+                              <span className="mb-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-ink-400">Qty</span>
+                              <input className="input px-2 text-right" type="number" step="any" min="0" value={l.quantity} onChange={(e) => patch(l.key, { quantity: e.target.value })} placeholder="0" />
+                            </label>
+                            <label className="block">
+                              <span className="mb-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-ink-400">List ₹</span>
+                              <input className="input px-2 text-right" type="number" step="0.01" min="0" value={l.unitPrice} onChange={(e) => patch(l.key, { unitPrice: e.target.value })} placeholder="0" />
+                            </label>
+                            <label className="block min-w-0">
+                              <span className="mb-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-ink-400">Discount</span>
+                              <div className="flex items-center gap-1.5">
+                                <input className="input px-2 text-right" type="number" step="0.01" min="0" value={l.discountValue} onChange={(e) => patch(l.key, { discountValue: e.target.value })} placeholder="0" />
+                                <DiscountTypeToggle value={l.discountType} onChange={(t) => patch(l.key, { discountType: t })} />
+                              </div>
+                            </label>
+                            <div className="pb-1.5 text-right">
+                              <span className="mb-1 block font-mono text-[9px] uppercase tracking-[0.06em] text-ink-400">Net / line</span>
+                              <span className="whitespace-nowrap font-mono text-[13px] font-semibold text-ink-900">{formatMoney(netUnit * qty, currency)}</span>
+                              {disc > 0 && <span className="block font-mono text-[9.5px]" style={{ color: RED }}>−{formatMoney(disc * qty, currency)}</span>}
+                            </div>
+                          </div>
                           {orig && orig.requestedQty != null && (
-                            <div className="mt-0.5 pl-1 font-mono text-[10px] text-ink-400">
+                            <div className="mt-1.5 font-mono text-[10px] text-ink-400">
                               requested {orig.requestedQty} × {formatMoney(orig.requestedUnitPrice ?? 0, currency)}
                             </div>
                           )}
+                          {!orig && <div className="mt-1.5 font-mono text-[10px] text-ink-400">added by you · line {i + 1}</div>}
                         </div>
                       );
                     })}
@@ -222,11 +284,41 @@ export function ReviewDrawer({
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between rounded-[10px] px-4 py-3" style={{ background: "oklch(0.955 0.025 168)" }}>
-                  <span className="font-mono text-[9.5px] uppercase tracking-[0.08em]" style={{ color: "oklch(0.48 0.08 168)" }}>Order total on approval</span>
-                  <span className="font-mono text-[19px] font-bold tracking-[-0.02em]" style={{ color: "oklch(0.48 0.08 168)" }}>
-                    {formatMoney(approveTotal, currency)}
-                  </span>
+                <div>
+                  <label className="label">Order discount</label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      className="input px-2 text-right"
+                      style={{ maxWidth: 120 }}
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={orderDiscountValue}
+                      onChange={(e) => setOrderDiscountValue(e.target.value)}
+                      placeholder="0"
+                    />
+                    <DiscountTypeToggle value={orderDiscountType} onChange={setOrderDiscountType} />
+                    <span className="text-[11.5px] text-ink-400">applied across the whole invoice</span>
+                  </div>
+                  <p className="mt-1 text-[11.5px] text-ink-400">
+                    Pre-filled from {detail.customerName}&apos;s agreed rate — the price they were quoted.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-[var(--border)] p-4">
+                  <TotalRow label="Subtotal (list)" value={formatMoney(totals.listSubtotal, currency)} />
+                  {totals.lineDiscount > 0 && (
+                    <TotalRow label="Line discounts" value={`−${formatMoney(totals.lineDiscount, currency)}`} negative />
+                  )}
+                  {totals.orderDiscount > 0 && (
+                    <TotalRow label="Order discount" value={`−${formatMoney(totals.orderDiscount, currency)}`} negative />
+                  )}
+                  <div className="mt-2 flex items-center justify-between border-t border-[var(--border)] pt-2.5">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: "oklch(0.48 0.08 168)" }}>Books at</span>
+                    <span className="font-mono text-[19px] font-bold tracking-[-0.02em]" style={{ color: "oklch(0.48 0.08 168)" }}>
+                      {formatMoney(totals.netTotal, currency)}
+                    </span>
+                  </div>
                 </div>
 
                 <div>
@@ -259,6 +351,15 @@ export function ReviewDrawer({
         </DrawerFooter>
       )}
     </Drawer>
+  );
+}
+
+function TotalRow({ label, value, negative }: { label: string; value: string; negative?: boolean }) {
+  return (
+    <div className="flex items-center justify-between py-0.5 text-[12.5px]">
+      <span className="text-ink-500">{label}</span>
+      <span className="font-mono font-semibold" style={{ color: negative ? RED : "oklch(0.3 0.01 260)" }}>{value}</span>
+    </div>
   );
 }
 

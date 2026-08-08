@@ -14,7 +14,16 @@ function useMoney(currency: string) {
   );
 }
 
-export function CatalogOrder({ catalog, currency }: { catalog: CatalogProduct[]; currency: string }) {
+export function CatalogOrder({
+  catalog,
+  currency,
+  discountPct,
+}: {
+  catalog: CatalogProduct[];
+  currency: string;
+  /** The buyer's contracted standing discount %, applied to the order total. */
+  discountPct: number | null;
+}) {
   const router = useRouter();
   const money = useMoney(currency);
   const [q, setQ] = useState("");
@@ -31,7 +40,12 @@ export function CatalogOrder({ catalog, currency }: { catalog: CatalogProduct[];
 
   const byId = useMemo(() => new Map(catalog.map((p) => [p.id, p])), [catalog]);
   const cartLines = Object.entries(cart).filter(([, qty]) => qty > 0);
-  const cartTotal = cartLines.reduce((s, [id, qty]) => s + (byId.get(id)?.sellingPrice ?? 0) * qty, 0);
+  // List subtotal, then the buyer's contracted discount — the same figure staff
+  // see on review and the price the order books at.
+  const cartSubtotal = cartLines.reduce((s, [id, qty]) => s + (byId.get(id)?.sellingPrice ?? 0) * qty, 0);
+  const hasDiscount = !!discountPct && discountPct > 0;
+  const cartDiscount = hasDiscount ? (cartSubtotal * Math.min(discountPct!, 100)) / 100 : 0;
+  const cartTotal = cartSubtotal - cartDiscount;
 
   function setQty(id: string, qty: number) {
     setCart((c) => ({ ...c, [id]: Math.max(0, qty) }));
@@ -151,9 +165,23 @@ export function CatalogOrder({ catalog, currency }: { catalog: CatalogProduct[];
                   </div>
                 );
               })}
-              <div className="mt-2 flex items-center justify-between border-t border-ink-100 pt-3">
-                <span className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink-500">Est. total</span>
-                <span className="text-[17px] font-extrabold tracking-[-0.02em] text-ink-900">{money.format(cartTotal)}</span>
+              <div className="mt-2 border-t border-ink-100 pt-3">
+                {hasDiscount && (
+                  <>
+                    <div className="flex items-center justify-between py-0.5 text-[12.5px]">
+                      <span className="text-ink-500">Subtotal</span>
+                      <span className="font-semibold text-ink-700">{money.format(cartSubtotal)}</span>
+                    </div>
+                    <div className="flex items-center justify-between py-0.5 text-[12.5px]">
+                      <span className="text-ink-500">Your discount ({discountPct}%)</span>
+                      <span className="font-semibold" style={{ color: "oklch(0.48 0.08 168)" }}>−{money.format(cartDiscount)}</span>
+                    </div>
+                  </>
+                )}
+                <div className="flex items-center justify-between pt-1">
+                  <span className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink-500">Est. total</span>
+                  <span className="text-[17px] font-extrabold tracking-[-0.02em] text-ink-900">{money.format(cartTotal)}</span>
+                </div>
               </div>
               <p className="text-[11px] leading-relaxed text-ink-400">
                 Indicative — your supplier confirms final pricing on approval.

@@ -2,7 +2,7 @@ import { getCatalog, buyerCurrency } from "@/server/actions/buyer-actions";
 import { CatalogOrder } from "./catalog-order";
 
 export default async function CatalogPage() {
-  const [catalog, currency] = await Promise.all([getCatalog(), buyerCurrency()]);
+  const [{ products, discountPct }, currency] = await Promise.all([getCatalog(), buyerCurrency()]);
 
   return (
     <div className="animate-fade-up">
@@ -14,7 +14,7 @@ export default async function CatalogPage() {
           pricing and approves before it becomes an order.
         </p>
       </div>
-      <CatalogOrder catalog={catalog} currency={currency} />
+      <CatalogOrder catalog={products} currency={currency} discountPct={discountPct} />
     </div>
   );
 }
